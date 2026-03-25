@@ -18,13 +18,10 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ──────── Usage / stats endpoint ────────
-
 const CLAUDE_DIR = path.join(HOME, '.claude');
 const STATS_FILE = path.join(CLAUDE_DIR, 'stats-cache.json');
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 
-// Read stats-cache.json
 function readStatsCache() {
   try {
     return JSON.parse(fs.readFileSync(STATS_FILE, 'utf-8'));
@@ -33,12 +30,10 @@ function readStatsCache() {
   }
 }
 
-// Scan recent session JSONL files to compute live usage for today/this week
 async function computeRecentUsage() {
   const now = new Date();
   const todayStr = now.toISOString().split('T')[0];
 
-  // Monday of this week
   const dayOfWeek = now.getDay();
   const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   const monday = new Date(now);
@@ -50,7 +45,6 @@ async function computeRecentUsage() {
     week: { messages: 0, sessions: new Set(), inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, models: {} },
   };
 
-  // Find all session JSONL files modified this week
   let sessionFiles = [];
   try {
     const projectDirs = fs.readdirSync(PROJECTS_DIR);
@@ -94,7 +88,6 @@ async function computeRecentUsage() {
 
         if (entry.type === 'user' || (entry.type === 'assistant' && usage)) {
           const bucket = isToday ? result.today : null;
-          // Always add to week
           if (entry.type === 'user') {
             result.week.messages++;
             if (sessionId) result.week.sessions.add(sessionId);
@@ -144,7 +137,6 @@ async function computeRecentUsage() {
     } catch {}
   }
 
-  // Convert sets to counts
   result.today.sessions = result.today.sessions.size;
   result.week.sessions = result.week.sessions.size;
 
@@ -156,8 +148,6 @@ app.get('/api/stats', async (_req, res) => {
   const recent = await computeRecentUsage();
   res.json({ cached, recent });
 });
-
-// ──────── Terminal management ────────
 
 const terminals = new Map();
 let nextId = 1;

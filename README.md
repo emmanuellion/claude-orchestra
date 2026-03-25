@@ -24,12 +24,12 @@ When working on complex projects, a single Claude Code instance isn't always eno
 
 - Run **multiple Claude Code instances in parallel**, each on a different task
 - See at a glance **who's working, who's waiting, who's finished**
-- **Minimize** a terminal without stopping it — it keeps running in the background
+- **Minimize** a terminal without stopping it - it keeps running in the background
 - **Broadcast** a command to all terminals at once
 - Track your **token usage** per model in real time
 - Get **desktop notifications** when a terminal finishes its task
 
-## 100% Local — No data sent anywhere
+## 100% Local - No data sent anywhere
 
 **Orchestra runs entirely on your machine.** No remote server, no telemetry, no tracking.
 
@@ -48,12 +48,12 @@ When working on complex projects, a single Claude Code instance isn't always eno
 <tr>
 <td width="60%">
 
-### Sidebar — Terminal status
+### Sidebar - Terminal status
 Each terminal shows its real-time state:
-- **Gold spinner** — running / executing
-- **Gray dot** — idle, waiting for input
-- **Red dot** — process exited
-- **Reduced opacity** — minimized (still running in background)
+- **Gold spinner** - running / executing
+- **Gray dot** - idle, waiting for input
+- **Red dot** - process exited
+- **Reduced opacity** - minimized (still running in background)
 
 </td>
 <td>
@@ -65,7 +65,7 @@ Each terminal shows its real-time state:
 <tr>
 <td>
 
-### Usage — Per-model token tracking
+### Usage - Per-model token tracking
 Real-time token consumption per model:
 - Input, output, cache read and cache creation tokens
 - Data from `~/.claude/projects/` session files
@@ -90,7 +90,7 @@ Real-time token consumption per model:
 |------|-------------|-------|
 | **Node.js** | 18+ | `node --version` |
 | **Python** | 3.8+ | `python3 --version` (`python --version` on Windows) |
-| **Claude Code** | — | `claude --version` |
+| **Claude Code** | - | `claude --version` |
 
 ### macOS / Linux
 
@@ -215,7 +215,7 @@ claude-orchestra/
 2. For each new terminal, the server launches `pty-helper.py`
 3. The Python helper allocates a real PTY (Unix) or subprocess (Windows)
 4. The shell starts in the PTY, and optionally launches `claude`
-5. All communication goes through stdin/stdout — **nothing leaves localhost**
+5. All communication goes through stdin/stdout - **nothing leaves localhost**
 
 ### Compatibility
 

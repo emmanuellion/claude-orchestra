@@ -31,8 +31,6 @@ body{
 
 #app{display:flex;height:100vh}
 
-/* ════════ SIDEBAR ════════ */
-
 #sidebar{
   width:240px;
   min-width:240px;
@@ -57,7 +55,6 @@ body{
 .logo-name{font-size:14px;font-weight:700;color:var(--text);letter-spacing:-.3px}
 .logo-sub{font-size:10px;color:var(--text-3);font-weight:500}
 
-/* Add buttons */
 .sidebar-actions{
   padding:0 10px 12px;
   display:flex;
@@ -86,7 +83,6 @@ body{
 .btn-add:hover{border-color:var(--border-hover);color:var(--text);background:var(--surface-3)}
 .btn-add-claude:hover{border-color:var(--accent);color:var(--accent)}
 
-/* Section */
 .sidebar-section{
   padding:0 10px;
   margin-bottom:8px;
@@ -119,7 +115,6 @@ body{
 .btn-refresh svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .btn-refresh:hover{color:var(--accent);background:var(--accent-dim)}
 
-/* Sidebar list */
 #sidebar-list{display:flex;flex-direction:column;gap:1px}
 
 .sidebar-item{
@@ -177,7 +172,6 @@ body{
 .si-actions button:hover{background:var(--surface-3);color:var(--text)}
 .si-actions button.act-kill:hover{color:var(--red)}
 
-/* Usage */
 .sidebar-usage{
   border-top:1px solid var(--border);
   padding-top:4px;
@@ -196,7 +190,6 @@ body{
 .usage-bar-track{height:3px;background:var(--bg);border-radius:2px;overflow:hidden;margin-top:2px}
 .usage-bar-fill{height:100%;border-radius:2px;transition:width .3s;background:var(--accent)}
 
-/* Footer */
 .sidebar-footer{
   padding:8px 10px;
   border-top:1px solid var(--border);
@@ -219,8 +212,6 @@ body{
 .broadcast-toggle{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--text-3);cursor:pointer}
 .broadcast-toggle input{accent-color:var(--accent);width:12px;height:12px}
 
-/* ════════ MAIN ════════ */
-
 main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 
 #terminals-container{flex:1;overflow:hidden;padding:6px;gap:6px}
@@ -230,8 +221,6 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .layout-tabs .terminal-panel:not(.tab-active){display:none}
 .layout-cols{display:flex;flex-direction:row}
 .layout-cols .terminal-panel{flex:1;min-width:0}
-
-/* ════════ TERMINAL PANEL ════════ */
 
 .terminal-panel{
   background:var(--surface);
@@ -319,7 +308,6 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 }
 .term-input button:hover{border-color:var(--accent);color:var(--accent)}
 
-/* Broadcast bar */
 #broadcast-bar{border-top:1px solid var(--accent);background:var(--surface);flex-shrink:0}
 #broadcast-bar.hidden{display:none}
 .broadcast-inner{display:flex;align-items:center;gap:8px;padding:8px 12px}
@@ -340,7 +328,6 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 }
 .btn-send:hover{background:var(--accent-hover)}
 
-/* Empty state */
 .empty-state{
   display:flex;flex-direction:column;
   align-items:center;justify-content:center;
@@ -350,7 +337,6 @@ main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .empty-state p{font-size:13px;color:var(--text-3)}
 .empty-state p strong{color:var(--text-2)}
 
-/* Scrollbar */
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
