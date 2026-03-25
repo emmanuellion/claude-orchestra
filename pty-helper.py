@@ -151,7 +151,6 @@ def run_unix():
 
 
 def run_windows():
-    import msvcrt
     import threading
 
     shell = os.environ.get('COMSPEC', 'cmd.exe')
@@ -183,12 +182,9 @@ def run_windows():
         finally:
             stop.set()
 
-    reader_thread = threading.Thread(target=read_output, daemon=True)
-    reader_thread.start()
-
-    try:
-        while not stop.is_set() and proc.poll() is None:
-            if msvcrt.kbhit():
+    def read_input():
+        try:
+            while not stop.is_set():
                 data = sys.stdin.buffer.read1(16384) if hasattr(sys.stdin.buffer, 'read1') else sys.stdin.buffer.read(1)
                 if not data:
                     break
@@ -197,9 +193,20 @@ def run_windows():
                 if proc.stdin and not proc.stdin.closed:
                     proc.stdin.write(data)
                     proc.stdin.flush()
-            else:
-                import time
-                time.sleep(0.01)
+        except (OSError, ValueError):
+            pass
+        finally:
+            stop.set()
+
+    reader_thread = threading.Thread(target=read_output, daemon=True)
+    reader_thread.start()
+
+    input_thread = threading.Thread(target=read_input, daemon=True)
+    input_thread.start()
+
+    try:
+        while not stop.is_set() and proc.poll() is None:
+            stop.wait(0.1)
     except KeyboardInterrupt:
         pass
     finally:
@@ -209,6 +216,7 @@ def run_windows():
         except Exception:
             pass
         reader_thread.join(timeout=2)
+        input_thread.join(timeout=2)
 
 
 if __name__ == '__main__':

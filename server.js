@@ -12,6 +12,11 @@ const PYTHON = IS_WIN ? 'python' : 'python3';
 const NEWLINE = IS_WIN ? '\r\n' : '\n';
 const HOME = os.homedir();
 
+let nodePty = null;
+if (IS_WIN) {
+  try { nodePty = require('node-pty'); } catch {}
+}
+
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -153,8 +158,40 @@ const terminals = new Map();
 let nextId = 1;
 const PTY_HELPER = path.join(__dirname, 'pty-helper.py');
 
-function createTerminalProcess(cols, rows, cwd) {
+function createTerminal(id, cols, rows, cwd, ws) {
   const targetCwd = cwd || HOME;
+
+  if (IS_WIN && nodePty) {
+    const shell = process.env.COMSPEC || 'cmd.exe';
+    const ptyProc = nodePty.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols, rows,
+      cwd: targetCwd,
+      env: process.env,
+    });
+
+    ptyProc.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'output', id, data }));
+      }
+    });
+
+    ptyProc.onExit(({ exitCode }) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'exit', id, exitCode: exitCode || 0 }));
+      }
+      terminals.delete(id);
+    });
+
+    return {
+      usePty: true,
+      pty: ptyProc,
+      write(d) { ptyProc.write(d); },
+      resize(r, c) { try { ptyProc.resize(c, r); } catch {} },
+      kill() { try { ptyProc.kill(); } catch {} },
+    };
+  }
+
   const defaultShell = IS_WIN
     ? (process.env.COMSPEC || 'cmd.exe')
     : (process.env.SHELL || '/bin/bash');
@@ -172,17 +209,38 @@ function createTerminalProcess(cols, rows, cwd) {
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  return proc;
-}
 
-function killProc(proc) {
-  try {
-    if (IS_WIN) {
-      spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
-    } else {
-      proc.kill('SIGTERM');
+  proc.stdout.on('data', (chunk) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'output', id, data: chunk.toString('utf-8') }));
     }
-  } catch {}
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'output', id, data: chunk.toString('utf-8') }));
+    }
+  });
+
+  proc.on('exit', (exitCode) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'exit', id, exitCode: exitCode || 0 }));
+    }
+    terminals.delete(id);
+  });
+
+  return {
+    usePty: false,
+    proc,
+    write(d) { if (proc.stdin.writable) proc.stdin.write(d); },
+    resize(r, c) { if (proc.stdin.writable) proc.stdin.write(`\x1b]boss:resize:${r}:${c}\\`); },
+    kill() {
+      try {
+        if (IS_WIN) spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+        else proc.kill('SIGTERM');
+      } catch {}
+    },
+  };
 }
 
 wss.on('connection', (ws) => {
@@ -198,61 +256,38 @@ wss.on('connection', (ws) => {
         const rows = data.rows || 30;
         const cwd = data.cwd || HOME;
 
-        const proc = createTerminalProcess(cols, rows, cwd);
-        terminals.set(id, { proc, ws, name: data.name || `Terminal ${id}` });
-
-        proc.stdout.on('data', (chunk) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'output', id, data: chunk.toString('utf-8') }));
-          }
-        });
-
-        proc.stderr.on('data', (chunk) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'output', id, data: chunk.toString('utf-8') }));
-          }
-        });
-
-        proc.on('exit', (exitCode) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'exit', id, exitCode: exitCode || 0 }));
-          }
-          terminals.delete(id);
-        });
+        const term = createTerminal(id, cols, rows, cwd, ws);
+        terminals.set(id, { term, ws, name: data.name || `Terminal ${id}` });
 
         ws.send(JSON.stringify({ type: 'created', id, name: terminals.get(id).name }));
 
         if (launchClaude) {
-          setTimeout(() => {
-            if (proc.stdin.writable) proc.stdin.write(`claude${NEWLINE}`);
-          }, 500);
+          setTimeout(() => term.write(`claude${NEWLINE}`), 500);
         }
         break;
       }
 
       case 'input': {
         const t = terminals.get(data.id);
-        if (t && t.proc.stdin.writable) t.proc.stdin.write(data.data);
+        if (t) t.term.write(data.data);
         break;
       }
 
       case 'resize': {
         const t = terminals.get(data.id);
-        if (t && t.proc.stdin.writable) {
-          t.proc.stdin.write(`\x1b]boss:resize:${data.rows}:${data.cols}\\`);
-        }
+        if (t) t.term.resize(data.rows, data.cols);
         break;
       }
 
       case 'kill': {
         const t = terminals.get(data.id);
-        if (t) { killProc(t.proc); terminals.delete(data.id); }
+        if (t) { t.term.kill(); terminals.delete(data.id); }
         break;
       }
 
       case 'broadcast': {
         for (const [, t] of terminals) {
-          if (t.proc.stdin.writable) t.proc.stdin.write(data.data);
+          t.term.write(data.data);
         }
         break;
       }
@@ -261,7 +296,7 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     for (const [id, t] of terminals) {
-      if (t.ws === ws) { killProc(t.proc); terminals.delete(id); }
+      if (t.ws === ws) { t.term.kill(); terminals.delete(id); }
     }
   });
 });
