@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""
-PTY helper: bridges stdin/stdout to a real PTY (Unix) or subprocess (Windows).
-Cross-platform: macOS, Linux, Windows.
-
-Resize protocol: write the resize command on a separate file descriptor (fd 3)
-passed via the BOSS_RESIZE_FD env var, OR inline via the escape sequence
-\x1b]boss:resize:ROWS:COLS\ in stdin.
-"""
 
 import os
 import sys
@@ -31,7 +23,6 @@ def run_unix():
 
     master, slave = pty.openpty()
 
-    # Set initial window size
     winsize = struct.pack('HHHH', rows, cols, 0, 0)
     fcntl.ioctl(master, termios.TIOCSWINSZ, winsize)
 
@@ -39,7 +30,6 @@ def run_unix():
     if pid == 0:
         os.close(master)
         os.setsid()
-        # Set the slave as controlling terminal
         import tty
         fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
         os.dup2(slave, 0)
@@ -50,17 +40,14 @@ def run_unix():
         os.chdir(cwd)
         os.execlp(shell, shell, '-i')
 
-    # Parent
     os.close(slave)
 
-    # Non-blocking stdin
     flags = fcntl.fcntl(sys.stdin.fileno(), fcntl.F_GETFL)
     fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
     stdout = sys.stdout.buffer
     stdin_fd = sys.stdin.fileno()
 
-    # Buffer for detecting resize escape sequences that may arrive in chunks
     pending = b''
 
     RESIZE_PREFIX = b'\x1b]boss:resize:'
@@ -76,34 +63,27 @@ def run_unix():
             pass
 
     def process_input(data):
-        """Process input data, extracting any resize commands and forwarding the rest."""
         nonlocal pending
         pending += data
 
         while pending:
             idx = pending.find(b'\x1b]boss:resize:')
             if idx == -1:
-                # No resize command — forward everything
                 os.write(master, pending)
                 pending = b''
                 return
 
-            # Forward bytes before the resize command
             if idx > 0:
                 os.write(master, pending[:idx])
                 pending = pending[idx:]
 
-            # Look for the end of the resize command (backslash)
             end = pending.find(b'\\', len(RESIZE_PREFIX))
             if end == -1:
-                # Incomplete resize command — wait for more data
                 if len(pending) > 50:
-                    # Too long, probably not a real resize — forward it
                     os.write(master, pending)
                     pending = b''
                 return
 
-            # Extract and apply resize
             cmd = pending[len(RESIZE_PREFIX):end]
             pending = pending[end + 1:]
             try:
@@ -140,11 +120,9 @@ def run_unix():
                         continue
                     break
 
-            # Check child
             try:
                 result = os.waitpid(pid, os.WNOHANG)
                 if result[0] != 0:
-                    # Drain remaining output
                     try:
                         while True:
                             data = os.read(master, 65536)

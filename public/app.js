@@ -6,7 +6,7 @@ const IC = {
 };
 
 function fmtTok(n) {
-  if (n == null) return '—';
+  if (n == null) return '-';
   if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B tok';
   if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M tok';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K tok';
@@ -31,8 +31,6 @@ class Orchestra {
     this.requestNotifPermission();
   }
 
-  // ──── Notifications ────
-
   requestNotifPermission() {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
@@ -52,8 +50,6 @@ class Orchestra {
     setTimeout(() => n.close(), 8000);
   }
 
-  // ──── WebSocket ────
-
   connect() {
     const p = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.ws = new WebSocket(`${p}//${location.host}`);
@@ -69,14 +65,12 @@ class Orchestra {
     else if (m.type === 'exit') this.onExit(m.id, m.exitCode);
   }
 
-  // ──── Usage ────
-
   async loadUsage() {
     const el = document.getElementById('usage-content');
     try {
       const r = await fetch('/api/stats');
       const d = await r.json();
-      if (!d) { el.innerHTML = '<div class="usage-loading">Aucune donnée</div>'; return; }
+      if (!d) { el.innerHTML = '<div class="usage-loading">Aucune donnee</div>'; return; }
       this.renderUsage(d);
     } catch { el.innerHTML = '<div class="usage-loading">Erreur</div>'; }
   }
@@ -101,7 +95,7 @@ class Orchestra {
     }
 
     const entries = Object.entries(models);
-    if (!entries.length) { el.innerHTML = '<div class="usage-loading">Aucune donnée</div>'; return; }
+    if (!entries.length) { el.innerHTML = '<div class="usage-loading">Aucune donnee</div>'; return; }
     const maxO = Math.max(...entries.map(([, m]) => m.o), 1);
     let h = '';
     for (const [name, m] of entries) {
@@ -118,8 +112,6 @@ class Orchestra {
     el.innerHTML = h;
   }
 
-  // ──── Bind UI ────
-
   bind() {
     document.getElementById('btn-add-claude').onclick = () => this.create('claude');
     document.getElementById('btn-add-shell').onclick = () => this.create('shell');
@@ -134,15 +126,11 @@ class Orchestra {
     this.emptyState();
   }
 
-  // ──── Auto layout ────
-
   autoLayout() {
     const vis = [...this.terms.values()].filter(t => t.visible).length;
     const next = vis <= 1 ? 'grid' : vis === 2 ? 'cols' : 'grid';
     if (next !== this.layout) this.setLayout(next);
   }
-
-  // ──── Terminal ────
 
   create(cmd) {
     const n = cmd === 'claude' ? `Claude ${this.terms.size + 1}` : `Shell ${this.terms.size + 1}`;
@@ -212,7 +200,7 @@ class Orchestra {
           <span class="term-badge ${badge}">${label}</span>
         </div>
         <div class="term-actions">
-          <button class="act-restart" title="Redémarrer">${IC.restart}</button>
+          <button class="act-restart" title="Redemarrer">${IC.restart}</button>
           <button class="act-min" title="Minimiser">${IC.min}</button>
           <button class="act-kill" title="Fermer">${IC.close}</button>
         </div>
@@ -249,7 +237,7 @@ class Orchestra {
     const was = t.status !== 'busy';
     t.status = 'busy';
     clearTimeout(t.timer);
-    t.timer = setTimeout(() => { if (t.alive) { t.status = 'idle'; this.statusUI(id); this.notify(`${t.name} a terminé`, 'Le terminal est en attente de nouvelles instructions.'); } }, this.IDLE_MS);
+    t.timer = setTimeout(() => { if (t.alive) { t.status = 'idle'; this.statusUI(id); this.notify(`${t.name} a termine`, 'Le terminal est en attente de nouvelles instructions.'); } }, this.IDLE_MS);
     if (was) this.statusUI(id);
   }
 
@@ -269,7 +257,7 @@ class Orchestra {
     clearTimeout(t.timer);
     t.xterm.write(`\r\n\x1b[31m[exited ${code}]\x1b[0m\r\n`);
     this.statusUI(id);
-    if (wasBusy) this.notify(`${t.name} s'est arrêté`, `Le processus s'est terminé avec le code ${code}.`);
+    if (wasBusy) this.notify(`${t.name} s'est arrete`, `Le processus s'est termine avec le code ${code}.`);
   }
 
   toggle(id) {
@@ -318,8 +306,6 @@ class Orchestra {
     if (i.value) { this.tx({ type: 'broadcast', data: i.value + '\n' }); i.value = ''; }
   }
 
-  // ──── Layout ────
-
   setLayout(l) {
     this.layout = l;
     document.getElementById('terminals-container').className = `layout-${l}`;
@@ -347,8 +333,6 @@ class Orchestra {
     this.sidebar();
   }
 
-  // ──── Sidebar ────
-
   sidebar() {
     const list = document.getElementById('sidebar-list');
     list.innerHTML = '';
@@ -358,7 +342,7 @@ class Orchestra {
       if (!t.visible) el.classList.add('minimized');
       if (id === this.activeTab && this.layout === 'tabs') el.classList.add('active');
 
-      const st = t.status === 'busy' ? 'En cours' : t.status === 'dead' ? 'Terminé' : 'En attente';
+      const st = t.status === 'busy' ? 'En cours' : t.status === 'dead' ? 'Termine' : 'En attente';
       const badge = t.isClaude ? 'claude' : 'shell';
       const label = t.isClaude ? 'CLAUDE' : 'SHELL';
       const tIcon = t.visible ? IC.min : IC.restore;
@@ -370,7 +354,7 @@ class Orchestra {
           <div class="si-meta">
             <span class="si-badge ${badge}">${label}</span>
             <span class="si-status-text">${st}</span>
-            ${!t.visible ? '<span style="color:var(--yellow);font-size:9px">minimisé</span>' : ''}
+            ${!t.visible ? '<span style="color:var(--yellow);font-size:9px">minimise</span>' : ''}
           </div>
         </div>
         <div class="si-actions">
@@ -401,7 +385,7 @@ class Orchestra {
         const min = this.terms.size > 0;
         d.innerHTML = `
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><line x1="7" y1="7" x2="10" y2="10"/><line x1="17" y1="7" x2="14" y2="10"/><line x1="7" y1="17" x2="10" y2="14"/><line x1="17" y1="17" x2="14" y2="14"/></svg>
-          <p>${min ? 'Tous les terminaux sont minimisés' : 'Aucune instance active'}</p>
+          <p>${min ? 'Tous les terminaux sont minimises' : 'Aucune instance active'}</p>
           <p>${min ? 'Cliquez sur une instance dans la sidebar' : 'Cliquez sur <strong>+ Claude Code</strong> pour commencer'}</p>`;
         c.appendChild(d);
       }
