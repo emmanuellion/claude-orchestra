@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Orchestra</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="3"/>
+            <circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/>
+            <circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/>
+            <line x1="7" y1="7" x2="10" y2="10"/><line x1="17" y1="7" x2="14" y2="10"/>
+            <line x1="7" y1="17" x2="10" y2="14"/><line x1="17" y1="17" x2="14" y2="14"/>
+          </svg>
+          <div class="logo-text">
+            <span class="logo-name">Orchestra</span>
+            <span class="logo-sub">Claude Code</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-actions">
+        <button id="btn-add-claude" class="btn-add btn-add-claude">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Claude Code
+        </button>
+        <button id="btn-add-shell" class="btn-add btn-add-shell">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Shell
+        </button>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-title">Instances</div>
+        <div id="sidebar-list"></div>
+      </div>
+
+      <div class="sidebar-section sidebar-usage">
+        <div class="section-title">
+          Usage
+          <button id="btn-refresh-usage" class="btn-refresh" title="Actualiser">
+            <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </div>
+        <div id="usage-content"><div class="usage-loading">Chargement...</div></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="footer-controls">
+          <div class="layout-controls">
+            <button class="layout-btn active" data-layout="grid" title="Grille">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            </button>
+            <button class="layout-btn" data-layout="cols" title="Colonnes">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="18" rx="1"/><rect x="13" y="3" width="8" height="18" rx="1"/></svg>
+            </button>
+            <button class="layout-btn" data-layout="tabs" title="Onglets">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+            </button>
+          </div>
+          <label class="broadcast-toggle">
+            <input type="checkbox" id="broadcast-mode">
+            <span>Broadcast</span>
+          </label>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main>
+      <div id="terminals-container" class="layout-grid"></div>
+
+      <div id="broadcast-bar" class="hidden">
+        <div class="broadcast-inner">
+          <svg class="broadcast-icon" viewBox="0 0 24 24"><path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/></svg>
+          <input type="text" id="broadcast-input" placeholder="Envoyer a tous les terminaux...">
+          <button id="broadcast-send" class="btn-send">Envoyer</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
