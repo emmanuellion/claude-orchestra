@@ -1,0 +1,45 @@
+{
+  "name": "claude-orchestra",
+  "version": "1.0.0",
+  "description": "Launch, monitor and communicate with multiple Claude Code instances from a single web interface",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon --watch server.js --watch public server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "anthropic",
+    "terminal",
+    "multiplexer",
+    "multi-instance",
+    "ai",
+    "cli",
+    "devtools",
+    "orchestra",
+    "parallel",
+    "pty",
+    "xterm",
+    "websocket"
+  ],
+  "author": "Emmanuel Lion",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emmanuellion/claude-orchestra.git"
+  },
+  "homepage": "https://github.com/emmanuellion/claude-orchestra",
+  "bugs": {
+    "url": "https://github.com/emmanuellion/claude-orchestra/issues"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
