@@ -26,8 +26,13 @@ When working on complex projects, a single Claude Code instance isn't always eno
 - See at a glance **who's working, who's waiting, who's finished**
 - **Minimize** a terminal without stopping it - it keeps running in the background
 - **Broadcast** a command to all terminals at once
-- Track your **token usage** per model in real time
+- Track your **subscription quota** (session, weekly, extra) in real time with live monitoring
 - Get **desktop notifications** when a terminal finishes its task
+- **Drag & drop** to reorder terminals in the sidebar
+- **Float** a terminal as a draggable, resizable overlay (picture-in-picture)
+- **Pop out** a terminal into its own browser window
+- **Resize** column panels with splitters
+- Pass **custom arguments** to Claude Code (e.g. `--model sonnet`)
 
 ## 100% Local - No data sent anywhere
 
@@ -65,11 +70,12 @@ Each terminal shows its real-time state:
 <tr>
 <td>
 
-### Usage - Per-model token tracking
-Real-time token consumption per model:
-- Input, output, cache read and cache creation tokens
-- Data from `~/.claude/projects/` session files
-- Refreshable with one click
+### Usage - Live quota monitoring
+Real-time subscription quota tracking:
+- Session (5h), weekly, and extra usage percentages
+- Reset countdown timers
+- Background watcher polls `/usage` every 2 minutes
+- Per-terminal cost tracking for Claude instances
 
 </td>
 <td>
@@ -95,7 +101,7 @@ Real-time token consumption per model:
 ### macOS / Linux
 
 ```bash
-git clone https://github.com/your-user/claude-orchestra.git
+git clone https://github.com/emmanuellion/claude-orchestra.git
 cd claude-orchestra
 npm install
 npm run dev
@@ -104,7 +110,7 @@ npm run dev
 ### Windows
 
 ```powershell
-git clone https://github.com/your-user/claude-orchestra.git
+git clone https://github.com/emmanuellion/claude-orchestra.git
 cd claude-orchestra
 npm install
 npm run dev
@@ -128,25 +134,37 @@ http://localhost:3000
 |--------|-------------|
 | **+ Claude Code** | Opens a terminal and launches `claude` automatically |
 | **+ Shell** | Opens a standard shell terminal (zsh/bash/cmd) |
+| **+ PowerShell** | Opens a PowerShell terminal (Windows only) |
+| **Args field** | Pass custom arguments to Claude Code (e.g. `--model sonnet`) |
 
 ### Managing terminals
 
 | Button | Action |
 |--------|--------|
-| **Minimize** | Hides the panel, the process keeps running in the background |
-| **Restore** | Re-displays a minimized terminal |
+| **Float** | Detaches the terminal as a draggable, resizable overlay |
+| **Pop out** | Opens the terminal in a separate browser window |
+| **Export** | Downloads the terminal output as a text file |
+| **Lock** | Locks input to prevent accidental keystrokes |
 | **Restart** | Kills and relaunches the terminal |
-| **Kill** | Terminates the process and removes the terminal |
+| **Minimize** | Hides the panel, the process keeps running in the background |
+| **Close** | Terminates the process and removes the terminal |
 
 ### Layouts
 
 | Icon | Mode | Description |
 |------|------|-------------|
 | Grid | **Grid** | Auto-adaptive grid layout |
+| Cols | **Columns** | Terminals side by side, resizable with splitters |
 | Tabs | **Tabs** | Single terminal visible, navigate via sidebar |
-| Cols | **Columns** | Terminals side by side |
 
 Auto-detection: 1 terminal = grid, 2 = columns, 3+ = grid.
+
+### Sidebar
+
+- **Drag & drop** items to reorder terminals
+- **Click** an item to focus it (or switch tabs in tab mode)
+- Each item shows: name, detected working directory, status, badge, and cost (for Claude instances)
+- **WebSocket indicator** (green/yellow/red dot) in the header shows connection status
 
 ### Broadcast
 
@@ -157,16 +175,16 @@ Enable the **Broadcast** toggle in the footer to send the same command to **all*
 
 ### Quick input
 
-Each terminal has an input bar at the bottom. Type text and press **Enter** to inject a command without clicking inside the terminal.
+Each terminal has an input bar at the bottom. Type text and press **Enter** to inject a command without clicking inside the terminal. Arrow up/down for history.
 
-### Usage panel
+### Quota monitoring
 
-The **Usage** panel in the sidebar shows per-model token consumption:
-- Input and output tokens
-- Cache read and creation tokens
-- Data scanned from `~/.claude/projects/` session JSONL files
+The **Usage** panel in the sidebar shows your Claude subscription limits:
+- **Session** (5h window), **Weekly**, and **Extra** usage percentages
+- Reset countdown timers for each quota
+- Per-terminal cost tracking
 
-Click the refresh button to update.
+Click **Start monitoring** to launch a background watcher that polls `/usage` every 2 minutes. Use the refresh button to trigger an immediate update, or the restart button to force restart the watcher.
 
 ### Notifications
 
@@ -174,7 +192,15 @@ When a terminal finishes its task (goes from busy to idle), Orchestra sends a **
 - You're on a different tab or another window is focused
 - You've granted notification permission
 
-This way you can work on something else and get notified when Claude is done.
+Toggle notifications on/off with the **Notifs** switch in the footer.
+
+### Settings
+
+| Toggle | Description |
+|--------|-------------|
+| **Broadcast** | Send input to all terminals simultaneously |
+| **Notifs** | Enable/disable desktop notifications |
+| **Confirm** | Ask for confirmation before closing a terminal |
 
 ---
 
@@ -182,11 +208,13 @@ This way you can work on something else and get notified when Claude is done.
 
 ```
 claude-orchestra/
-├── server.js          # Express + WebSocket server
+├── server.js          # Express + WebSocket server + quota watcher
 ├── pty-helper.py      # Cross-platform PTY bridge (macOS/Linux/Windows)
+├── quota-hook.js      # Status line hook for quota display
 ├── public/
 │   ├── index.html     # Main page
-│   ├── style.css      # Styles (dark theme)
+│   ├── popout.html    # Pop-out terminal window
+│   ├── style.css      # Styles (dark + light themes)
 │   └── app.js         # Client WebSocket + xterm.js
 ├── docs/
 │   └── *.svg          # Screenshots
@@ -212,10 +240,11 @@ claude-orchestra/
 ```
 
 1. The browser opens a WebSocket connection to the local server
-2. For each new terminal, the server launches `pty-helper.py`
-3. The Python helper allocates a real PTY (Unix) or subprocess (Windows)
+2. For each new terminal, the server launches `pty-helper.py` (or uses `node-pty` on Windows)
+3. The helper allocates a real PTY (Unix) or ConPTY (Windows)
 4. The shell starts in the PTY, and optionally launches `claude`
 5. All communication goes through stdin/stdout - **nothing leaves localhost**
+6. Multiple browser windows can attach to the same terminal via the pop-out feature
 
 ### Compatibility
 
@@ -223,7 +252,7 @@ claude-orchestra/
 |----|--------------|-----|
 | **macOS** | `$SHELL` (zsh) | `pty.openpty()` + `fork` |
 | **Linux** | `$SHELL` (bash) | `pty.openpty()` + `fork` |
-| **Windows** | `%COMSPEC%` (cmd) | `subprocess.Popen` |
+| **Windows** | `%COMSPEC%` (cmd) | `node-pty` (ConPTY) |
 
 ---
 

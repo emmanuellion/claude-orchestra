@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -26,7 +26,11 @@
             <span class="logo-name">Orchestra</span>
             <span class="logo-sub">Claude Code</span>
           </div>
+          <div id="ws-status" class="ws-status" title="Disconnected"></div>
         </div>
+        <button id="btn-collapse-sidebar" class="btn-collapse" title="Collapse sidebar">
+          <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
       </div>
 
       <div class="sidebar-actions">
@@ -34,9 +38,14 @@
           <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Claude Code
         </button>
+        <input id="claude-args" class="claude-args" type="text" placeholder="--model sonnet etc." spellcheck="false">
         <button id="btn-add-shell" class="btn-add btn-add-shell">
           <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Shell
+        </button>
+        <button id="btn-add-powershell" class="btn-add btn-add-shell" style="display:none">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          PowerShell
         </button>
       </div>
 
@@ -46,35 +55,56 @@
       </div>
 
       <div class="sidebar-section sidebar-usage">
-        <div class="section-title">
-          Usage
-          <button id="btn-refresh-usage" class="btn-refresh" title="Actualiser">
+        <div class="section-title section-title-toggle" id="usage-toggle">
+          <div class="section-title-left">
+            <svg class="section-chevron" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+            Usage
+          </div>
+          <button id="btn-refresh-usage" class="btn-refresh" title="Refresh">
             <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
         </div>
-        <div id="usage-content"><div class="usage-loading">Chargement...</div></div>
+        <div id="usage-content"><div class="usage-loading">Loading...</div></div>
       </div>
 
       <div class="sidebar-footer">
-        <div class="footer-controls">
+        <div class="footer-row">
           <div class="layout-controls">
-            <button class="layout-btn active" data-layout="grid" title="Grille">
+            <button class="layout-btn active" data-layout="grid" title="Grid">
               <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
             </button>
-            <button class="layout-btn" data-layout="cols" title="Colonnes">
+            <button class="layout-btn" data-layout="cols" title="Columns">
               <svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="18" rx="1"/><rect x="13" y="3" width="8" height="18" rx="1"/></svg>
             </button>
-            <button class="layout-btn" data-layout="tabs" title="Onglets">
+            <button class="layout-btn" data-layout="tabs" title="Tabs">
               <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
             </button>
           </div>
-          <label class="broadcast-toggle">
+          <button id="btn-theme" class="layout-btn" title="Toggle theme">
+            <svg class="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg class="icon-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+        </div>
+        <div class="footer-row footer-toggles">
+          <label class="toggle-pill" title="Broadcast input to all terminals">
             <input type="checkbox" id="broadcast-mode">
-            <span>Broadcast</span>
+            <span class="toggle-track"><span class="toggle-knob"></span></span>
+            <span class="toggle-label">Broadcast</span>
+          </label>
+          <label class="toggle-pill" title="Desktop notifications">
+            <input type="checkbox" id="notif-toggle" checked>
+            <span class="toggle-track"><span class="toggle-knob"></span></span>
+            <span class="toggle-label">Notifs</span>
+          </label>
+          <label class="toggle-pill" title="Confirm before closing terminals">
+            <input type="checkbox" id="confirm-close-toggle" checked>
+            <span class="toggle-track"><span class="toggle-knob"></span></span>
+            <span class="toggle-label">Confirm</span>
           </label>
         </div>
       </div>
     </aside>
+    <div id="sidebar-resize"></div>
 
     <!-- Main content -->
     <main>
@@ -83,8 +113,8 @@
       <div id="broadcast-bar" class="hidden">
         <div class="broadcast-inner">
           <svg class="broadcast-icon" viewBox="0 0 24 24"><path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/></svg>
-          <input type="text" id="broadcast-input" placeholder="Envoyer a tous les terminaux...">
-          <button id="broadcast-send" class="btn-send">Envoyer</button>
+          <input type="text" id="broadcast-input" placeholder="Send to all terminals...">
+          <button id="broadcast-send" class="btn-send">Send</button>
         </div>
       </div>
     </main>
@@ -93,6 +123,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
