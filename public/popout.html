@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terminal</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#09090b;overflow:hidden}
+    #terminal{width:100vw;height:100vh;padding-top:28px}
+    #terminal .xterm{height:100%}
+    #status{
+      position:fixed;top:0;left:0;right:0;
+      padding:4px 12px;font-size:11px;
+      font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;
+      color:#a1a1aa;background:rgba(9,9,11,.9);
+      border-bottom:1px solid #27272a;
+      z-index:10;display:flex;align-items:center;gap:8px;
+    }
+    #status .dot{width:6px;height:6px;border-radius:50%;background:#eab308}
+    #status.connected .dot{background:#22c55e}
+    #status.disconnected .dot{background:#ef4444}
+    #status .name{color:#d4a574;font-weight:500}
+  </style>
+</head>
+<body>
+  <div id="status"><span class="dot"></span><span class="msg">Connecting...</span> <span class="name"></span></div>
+  <div id="terminal"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script>
+    var params = new URLSearchParams(location.search);
+    var termId = parseInt(params.get('id'));
+    var termName = params.get('name') || 'Terminal';
+
+    document.title = termName;
+    document.querySelector('#status .name').textContent = termName;
+
+    var xterm = new Terminal({
+      theme: {
+        background:'#09090b',foreground:'#fafafa',
+        cursor:'#d4a574',cursorAccent:'#09090b',
+        selectionBackground:'rgba(212,165,116,.2)',
+        black:'#18181b',red:'#ef4444',green:'#22c55e',yellow:'#eab308',
+        blue:'#3b82f6',magenta:'#a855f7',cyan:'#06b6d4',white:'#e4e4e7',
+        brightBlack:'#3f3f46',brightRed:'#f87171',brightGreen:'#4ade80',
+        brightYellow:'#facc15',brightBlue:'#60a5fa',brightMagenta:'#c084fc',
+        brightCyan:'#22d3ee',brightWhite:'#ffffff',
+      },
+      fontSize:13,
+      fontFamily:"'SF Mono','Fira Code','JetBrains Mono',monospace",
+      cursorBlink:true,
+      scrollback:10000,
+    });
+
+    var fit = new FitAddon.FitAddon();
+    xterm.loadAddon(fit);
+    xterm.loadAddon(new WebLinksAddon.WebLinksAddon());
+    xterm.open(document.getElementById('terminal'));
+    fit.fit();
+
+    var statusEl = document.getElementById('status');
+    var ws;
+    var reconnectDelay = 1000;
+
+    function connect() {
+      var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(p + '//' + location.host);
+
+      ws.onopen = function() {
+        reconnectDelay = 1000;
+        ws.send(JSON.stringify({ type: 'attach', id: termId }));
+        statusEl.className = 'connected';
+        statusEl.querySelector('.msg').textContent = 'Connected';
+      };
+
+      ws.onmessage = function(e) {
+        var msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.type === 'output' && msg.id === termId) {
+          xterm.write(msg.data);
+        } else if (msg.type === 'exit' && msg.id === termId) {
+          xterm.write('\r\n\x1b[31m[exited ' + (msg.exitCode || 0) + ']\x1b[0m\r\n');
+          statusEl.className = 'disconnected';
+          statusEl.querySelector('.msg').textContent = 'Exited';
+        }
+      };
+
+      ws.onclose = function() {
+        statusEl.className = 'disconnected';
+        statusEl.querySelector('.msg').textContent = 'Disconnected';
+        var delay = reconnectDelay;
+        reconnectDelay = Math.min(delay * 2, 30000);
+        setTimeout(connect, delay);
+      };
+    }
+
+    xterm.onData(function(data) {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'input', id: termId, data: data }));
+      }
+    });
+
+    xterm.attachCustomKeyEventHandler(function(ev) {
+      if (ev.type !== 'keydown') return true;
+      var mod = ev.ctrlKey || ev.metaKey;
+      if (mod && ev.key === 'v') return false;
+      if (mod && ev.key === 'c' && xterm.hasSelection()) return false;
+      return true;
+    });
+
+    window.addEventListener('resize', function() {
+      fit.fit();
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'resize', id: termId, cols: xterm.cols, rows: xterm.rows }));
+      }
+    });
+
+    connect();
+  </script>
+</body>
+</html>
