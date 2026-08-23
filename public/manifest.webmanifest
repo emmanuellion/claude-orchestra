@@ -1,0 +1,13 @@
+{
+  "name": "Claude Orchestra",
+  "short_name": "Orchestra",
+  "description": "Control plane for a swarm of Claude Code agents",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "orientation": "any",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

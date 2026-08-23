@@ -2,124 +2,225 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Terminal</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Terminal - Claude Orchestra</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
+  <link rel="stylesheet" href="/style.css">
   <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{background:#09090b;overflow:hidden}
-    #terminal{width:100vw;height:100vh;padding-top:28px}
-    #terminal .xterm{height:100%}
-    #status{
-      position:fixed;top:0;left:0;right:0;
-      padding:4px 12px;font-size:11px;
-      font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;
-      color:#a1a1aa;background:rgba(9,9,11,.9);
-      border-bottom:1px solid #27272a;
-      z-index:10;display:flex;align-items:center;gap:8px;
+    /*
+     * Popout-only chrome.
+     *
+     * Everything here is scoped under `.popout` so it cannot collide with the
+     * shared stylesheet: the shell owns `.term-view`, `.term-screen` and
+     * `.term-banner`, and this window only adjusts how they fill a frame that
+     * holds exactly one terminal. Colors come from the variables in
+     * style.css, so the pop-out follows the same theme as the main window.
+     */
+    .popout {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
     }
-    #status .dot{width:6px;height:6px;border-radius:50%;background:#eab308}
-    #status.connected .dot{background:#22c55e}
-    #status.disconnected .dot{background:#ef4444}
-    #status .name{color:#d4a574;font-weight:500}
+
+    .popout-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      user-select: none;
+    }
+
+    .popout-name {
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 40%;
+    }
+
+    .popout-kind {
+      flex: 0 0 auto;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-dim);
+    }
+
+    .popout-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex: 0 0 auto;
+      color: var(--text-2);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .popout-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-3);
+      flex: 0 0 auto;
+    }
+    .popout-state[data-status="busy"] .popout-dot { background: var(--accent); animation: popout-pulse 1.4s ease-in-out infinite; }
+    .popout-state[data-status="idle"] .popout-dot { background: var(--green); }
+    .popout-state[data-status="starting"] .popout-dot { background: var(--yellow); }
+    .popout-state[data-status="awaiting-input"] .popout-dot,
+    .popout-state[data-status="awaiting-permission"] .popout-dot { background: var(--yellow); animation: popout-pulse 1s ease-in-out infinite; }
+    .popout-state[data-status="exited"] .popout-dot { background: var(--red); }
+
+    @keyframes popout-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+
+    .popout-detail {
+      color: var(--text-3);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .popout-link {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-2);
+      font: inherit;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .popout-link:hover { border-color: var(--accent); color: var(--accent); }
+    .popout-link svg { width: 13px; height: 13px; }
+
+    .popout-conn {
+      flex: 0 0 auto;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--yellow);
+    }
+    .popout-conn[data-conn="online"] { background: var(--green); }
+    .popout-conn[data-conn="offline"] { background: var(--red); }
+
+    .popout-stage {
+      flex: 1 1 auto;
+      min-height: 0;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .popout .term-view {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .popout .term-screen {
+      flex: 1 1 auto;
+      min-height: 0;
+      padding: 2px 4px;
+    }
+    .popout .term-screen .xterm { height: 100%; }
+    .popout .term-banner {
+      flex: 0 0 auto;
+      padding: 5px 10px;
+      font-size: 11px;
+      color: var(--text-2);
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+    }
+    .popout .term-banner-dead { color: var(--red); }
+
+    .popout-message {
+      margin: auto;
+      max-width: 460px;
+      padding: 24px;
+      text-align: center;
+    }
+    .popout-message-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .popout-message-hint {
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text-2);
+      margin-bottom: 16px;
+      word-break: break-word;
+    }
+    .popout-message-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .popout-message-actions button {
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-2);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .popout-message-actions button:hover { border-color: var(--accent); color: var(--accent); }
   </style>
 </head>
-<body>
-  <div id="status"><span class="dot"></span><span class="msg">Connecting...</span> <span class="name"></span></div>
-  <div id="terminal"></div>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
-  <script>
-    var params = new URLSearchParams(location.search);
-    var termId = parseInt(params.get('id'));
-    var termName = params.get('name') || 'Terminal';
+<body class="popout">
+  <header class="popout-header">
+    <span class="popout-name" id="popout-name">Terminal</span>
+    <span class="popout-kind" id="popout-kind" hidden></span>
+    <span class="popout-state" id="popout-state" data-status="starting">
+      <span class="popout-dot"></span><span id="popout-status-text">Connecting</span>
+    </span>
+    <span class="popout-detail" id="popout-detail"></span>
+    <span class="popout-conn" id="popout-conn" data-conn="connecting" title="Connecting"></span>
+    <button class="popout-link" id="popout-focus-main" title="Bring the main Orchestra window forward">
+      <span id="popout-focus-label">Main window</span>
+    </button>
+  </header>
 
-    document.title = termName;
-    document.querySelector('#status .name').textContent = termName;
+  <main class="popout-stage" id="popout-stage"></main>
 
-    var xterm = new Terminal({
-      theme: {
-        background:'#09090b',foreground:'#fafafa',
-        cursor:'#d4a574',cursorAccent:'#09090b',
-        selectionBackground:'rgba(212,165,116,.2)',
-        black:'#18181b',red:'#ef4444',green:'#22c55e',yellow:'#eab308',
-        blue:'#3b82f6',magenta:'#a855f7',cyan:'#06b6d4',white:'#e4e4e7',
-        brightBlack:'#3f3f46',brightRed:'#f87171',brightGreen:'#4ade80',
-        brightYellow:'#facc15',brightBlue:'#60a5fa',brightMagenta:'#c084fc',
-        brightCyan:'#22d3ee',brightWhite:'#ffffff',
-      },
-      fontSize:13,
-      fontFamily:"'SF Mono','Fira Code','JetBrains Mono',monospace",
-      cursorBlink:true,
-      scrollback:10000,
-    });
+  <noscript>Claude Orchestra needs JavaScript to run a terminal.</noscript>
 
-    var fit = new FitAddon.FitAddon();
-    xterm.loadAddon(fit);
-    xterm.loadAddon(new WebLinksAddon.WebLinksAddon());
-    xterm.open(document.getElementById('terminal'));
-    fit.fit();
+  <!--
+    Same vendor scripts as index.html, served from /vendor (node_modules), never
+    from a CDN. They are classic scripts, so they run before the module below
+    and TerminalView finds window.Terminal already defined.
 
-    var statusEl = document.getElementById('status');
-    var ws;
-    var reconnectDelay = 1000;
-
-    function connect() {
-      var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(p + '//' + location.host);
-
-      ws.onopen = function() {
-        reconnectDelay = 1000;
-        ws.send(JSON.stringify({ type: 'attach', id: termId }));
-        statusEl.className = 'connected';
-        statusEl.querySelector('.msg').textContent = 'Connected';
-      };
-
-      ws.onmessage = function(e) {
-        var msg;
-        try { msg = JSON.parse(e.data); } catch { return; }
-        if (msg.type === 'output' && msg.id === termId) {
-          xterm.write(msg.data);
-        } else if (msg.type === 'exit' && msg.id === termId) {
-          xterm.write('\r\n\x1b[31m[exited ' + (msg.exitCode || 0) + ']\x1b[0m\r\n');
-          statusEl.className = 'disconnected';
-          statusEl.querySelector('.msg').textContent = 'Exited';
-        }
-      };
-
-      ws.onclose = function() {
-        statusEl.className = 'disconnected';
-        statusEl.querySelector('.msg').textContent = 'Disconnected';
-        var delay = reconnectDelay;
-        reconnectDelay = Math.min(delay * 2, 30000);
-        setTimeout(connect, delay);
-      };
-    }
-
-    xterm.onData(function(data) {
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input', id: termId, data: data }));
-      }
-    });
-
-    xterm.attachCustomKeyEventHandler(function(ev) {
-      if (ev.type !== 'keydown') return true;
-      var mod = ev.ctrlKey || ev.metaKey;
-      if (mod && ev.key === 'v') return false;
-      if (mod && ev.key === 'c' && xterm.hasSelection()) return false;
-      return true;
-    });
-
-    window.addEventListener('resize', function() {
-      fit.fit();
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'resize', id: termId, cols: xterm.cols, rows: xterm.rows }));
-      }
-    });
-
-    connect();
-  </script>
+    There is deliberately no bootstrap <script> here: this page is served as a
+    static file, so the server cannot inject window.__ORCHESTRA__ into it.
+    popout.js builds that object itself; see the comment at the top of the file.
+  -->
+  <script src="/vendor/xterm/lib/xterm.js"></script>
+  <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
+  <script src="/vendor/addon-web-links/lib/addon-web-links.js"></script>
+  <script src="/vendor/addon-search/lib/addon-search.js"></script>
+  <script type="module" src="/popout.js"></script>
 </body>
 </html>
