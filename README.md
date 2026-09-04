@@ -2,14 +2,41 @@
 
 **The control plane for a swarm of [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents.**
 
-Orchestra runs N Claude Code agents at once and gives you the layer a terminal cannot provide:
-sessions that outlive the browser tab, agent state that comes from Claude Code's own hooks instead of
-guesswork on the ANSI stream, permission prompts you can answer from a phone, and a Race Mode that runs
-the same task in isolated git worktrees so you can compare the diffs and adopt a winner.
+Orchestra runs N Claude Code agents at once and adds the layer a terminal cannot: sessions that
+outlive the browser tab, agent state read from Claude Code's own hook events instead of guessed from
+the ANSI stream, permission prompts you answer from your phone, and isolated git worktrees racing the
+same task so you can compare the diffs and adopt a winner.
+
+It is built just as much for the hours you are **not** watching. Agents resume themselves when a quota
+window resets, stop themselves at a spend cap, obey rules committed to the repository they are working
+in, and hand you a summary of the night when you come back.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-259%20passing-brightgreen)]()
+
+### What is in here
+
+**Running agents** &nbsp;·&nbsp; [Why not just several terminals?](#why-not-just-several-terminals)
+&nbsp;·&nbsp; [Getting started](#getting-started)
+&nbsp;·&nbsp; [Telling sessions apart](#telling-sessions-apart)
+&nbsp;·&nbsp; [Hooks](#hooks)
+&nbsp;·&nbsp; [Race Mode](#race-mode)
+&nbsp;·&nbsp; [Recipes](#recipes-orchestrajson)
+
+**Deciding what agents may do** &nbsp;·&nbsp; [Remote permissions](#remote-permissions)
+&nbsp;·&nbsp; [Policy a repository carries](#policy-rules-a-repository-can-carry)
+&nbsp;·&nbsp; [Spend caps](#spend-caps-that-stop)
+
+**Working unattended** &nbsp;·&nbsp; [Quota blocks and auto resume](#quota-blocks-and-auto-resume)
+&nbsp;·&nbsp; [Push notifications](#push-the-last-mile-of-remote-approval)
+&nbsp;·&nbsp; [The recap](#the-recap-while-you-were-away)
+&nbsp;·&nbsp; [Agents on other machines](#agents-on-other-machines)
+
+**Operating it** &nbsp;·&nbsp; [Security](#security)
+&nbsp;·&nbsp; [Configuration](#configuration)
+&nbsp;·&nbsp; [Architecture](#architecture)
+&nbsp;·&nbsp; [Migrating from v1](#migrating-from-v1)
 
 ---
 
@@ -47,6 +74,14 @@ while you go get coffee and finding four agents stopped on a prompt.
 off the current commit, launches an agent in each, and then shows the four diffs side by side with cost
 and duration. Nothing touches your working tree until you adopt a winner.
 
+**5. A tty cannot be trusted to run alone.** The interesting hours are the ones nobody is watching, and
+that is exactly when an agent hits a quota wall at 03:00 and sits there until morning, or loops on a
+failing test until it has spent forty dollars. Orchestra treats unattended work as the normal case:
+it notices the quota block and types the prompt back when the window resets, stops a session at a spend
+cap without killing its context, enforces rules committed to the repository rather than remembered in
+one operator's browser, and greets you with what happened and what is still blocked. None of it is on
+by default, because a server that types into your terminals should be something you switched on.
+
 ---
 
 ## Getting started
@@ -78,6 +113,24 @@ npx claude-orchestra --no-open            # headless, print the URL only
 npx claude-orchestra --help               # every flag
 ```
 
+### The first run
+
+Orchestra opens on an empty grid and a short checklist. Two steps are required:
+install the Claude Code hooks, and start an agent in a project directory.
+
+The hooks matter more than the checklist makes them sound. They are how the
+server learns what an agent is doing; without them every panel is a plain
+terminal and the interesting screens (agent status, approvals, the timeline, the
+recap) stay empty with no error to explain it. That is why it is step one and
+why the checklist cannot be dismissed until it is done.
+
+The two optional steps change how things behave, so neither is switched on by
+installing hooks: **approving tool calls yourself** makes agents stop and wait
+for a human on every tool call, and **push** is what reaches your phone when the
+tab is closed. Both can be turned on later from Settings.
+
+The checklist removes itself once there is nothing left to say.
+
 ### Or from a clone
 
 ```bash
@@ -97,28 +150,47 @@ server without the browser-opening wrapper.
 
 ## Screens
 
-No screenshots are published yet. The three SVG files that used to sit here were hand-drawn mockups, not
+No screenshots are published yet. The SVG files that used to sit here were hand-drawn mockups, not
 captures of the running app, and calling them screenshots was a lie. An animated demo of the real UI is
 planned; until it lands, here is the honest version, the shape of the interface:
 
 ```
-+---------------------------+--------------------------------------------------+
-| SIDEBAR                   |  Terminals | Supervision | Approvals | Race | +   |
-|                           +--------------------------------------------------+
-| > api-refactor    busy    |                                                  |
-|     Edit src/db.js        |   xterm view of the focused session,              |
-| > docs-pass    idle       |   grid / columns / tabs                          |
-| > migration  awaiting     |                                                  |
-|     Bash: rm -rf build/   |   Supervision: one card per agent, live tool      |
-| > race:variant-a  busy    |   feed from the hook timeline                    |
-|                           |                                                  |
-| Usage  session 41%        |   Approvals: pending permission requests,         |
-|        weekly   12%       |   allow / deny, once / session / always          |
-+---------------------------+--------------------------------------------------+
++---------------------------+---------------------------------------------------+
+| SIDEBAR                   | Terminals  Agents  Approvals  Races  Recap  Projects
+|                           +---------------------------------------------------+
+| > api-refactor    busy    |                                                   |
+|     Edit src/db.js        |   Set up Orchestra              2 of 4 done  Hide |
+| > docs-pass       idle    |   [1] Install the Claude Code hooks     [Install] |
+| > migration  awaiting     |   (shown on first run, retires by itself)         |
+|     Bash: rm -rf build/   +---------------------------------------------------+
+| > race:variant-a  busy    |                                                   |
+| > api @ build-box  ext    |   xterm view of the focused session,               |
+|                           |   grid / columns / tabs                           |
+| Usage  session 41%        |                                                   |
+|        weekly   12%       |                                                   |
++---------------------------+---------------------------------------------------+
 ```
+
+Six top-level views, and the tooltip on each says what it is for:
+
+| View | What it answers |
+|---|---|
+| **Terminals** | The agents themselves. Type here like any terminal |
+| **Agents** | Every agent at a glance: what it is doing, for how long, at what cost |
+| **Approvals** | Tool calls an agent is blocked on, waiting for you |
+| **Races** | One prompt run several ways in isolated worktrees, then adopt a winner |
+| **Recap** | What happened while you were not watching, and what is still waiting |
+| **Projects** | Start an agent in a project directory |
 
 Status on the left comes from hooks, not from reading the terminal: `starting`, `idle`, `busy`,
 `awaiting-input`, `awaiting-permission`, `exited`, plus a detached marker when no browser is attached.
+A row marked `ext` is an agent on another machine, adopted through its hooks.
+
+Settings are six tabs rather than the nine these options would otherwise need: **Setup** (hooks),
+**General**, **Safety** (live approvals and repository policy), **Limits** (quota resume and spend
+caps), **Remote** (address, QR code, push) and **Shortcuts**. Approvals and policy are one question
+asked twice, and so are quota and budget; splitting them gave every pane an accurate name and left
+nobody able to guess which one to open.
 
 ---
 
@@ -152,7 +224,7 @@ everything running on this repo" is a colour click away.
 Hooks are the whole difference between a panel and a terminal. Without them Orchestra shows you bytes;
 with them it shows you what each agent is doing.
 
-Install them from **Settings > Hooks**. Orchestra writes to `~/.claude/settings.json`.
+Install them from **Settings > Setup**, or from the checklist Orchestra shows on first run. Orchestra writes to `~/.claude/settings.json`.
 
 | Event | What Orchestra does with it |
 |---|---|
@@ -256,7 +328,223 @@ A rule is `{tool, pattern, cwd, decision}`. Two properties matter:
   `cwd` on a rule scopes it to that directory and everything under it.
 
 Every decision, whoever made it, is appended to `~/.claude/orchestra/audit.log`, one JSON object per
-line, never rewritten. Rules are managed in **Settings > Approvals**.
+line, never rewritten. Rules are managed in **Settings > Safety**.
+
+---
+
+## Push: the last mile of remote approval
+
+Remote approval only means something if the request reaches you. The browser
+Notification API cannot do that: it needs the page alive and foregrounded, which
+a phone in a pocket never is. So Orchestra speaks Web Push, and a permission
+request wakes a closed tab.
+
+Enable it in **Settings > Remote**, on the device you want notified. What gets
+pushed: a permission request (the only one marked as requiring interaction,
+because an agent is blocked until it is answered and then fails closed), a
+budget cap being hit, a session resumed after a quota reset, and a stall.
+
+**The payload is encrypted to a key only your browser holds.** RFC 8291 with
+`aes128gcm`, signed with a VAPID keypair generated on first run and kept in
+`~/.claude/orchestra/push.json`. The push service (Google, Mozilla, Apple)
+forwards ciphertext it cannot read, and the server never sees the content again
+after it leaves. Both specs are implemented directly in `lib/push.js` rather than
+through `web-push`, because the repository ships no dependency it does not need;
+`test/push.test.js` decrypts what the encrypter produces using an independently
+derived subscriber key, and verifies the VAPID signature against the advertised
+public key.
+
+**Push needs a secure context.** Over plain http on a LAN address there is no
+service worker at all and the failure is otherwise silent, so the settings pane
+says so rather than offering a button that cannot work. Reach Orchestra over a
+tunnel with TLS, which is what the Remote tab is already telling you to do.
+
+`public/sw.js` is the only part of Orchestra that runs with the tab closed. It
+caches nothing on purpose: a stale cached copy of an app whose whole job is
+showing live agent state would be worse than no app.
+
+---
+
+## Spend caps that stop
+
+Cost was always visible. Visible is not the same as bounded, and an agent in a
+retry loop overnight is exactly the case where nobody is reading the dashboard.
+
+A cap turns the number Orchestra already reads into a limit. At the ceiling the
+session is **locked**, not killed: `locked` is a property the rest of the system
+already respects, so `SessionManager.write` refuses input and so does the quota
+auto resume. One flag, already honoured everywhere, is the whole enforcement
+mechanism. The context, the scrollback and the worktree all survive, because
+killing would destroy work to save money that was already spent.
+
+Caps come in two shapes, both in **Settings > Limits**: per session, and per
+calendar day across everything on the machine. A repository may ask for a
+stricter per-session cap in its own policy file (below); it can tighten the
+global number and never loosen it.
+
+**Unlocking grants another cap's worth, not an exemption.** The session is
+already past its limit when you unlock it, so a plain unlock would be undone by
+the very next hook event carrying a cost. Instead the ceiling is raised to what
+it has spent plus one more cap: the limit still exists, it was deliberately
+raised once, and it will stop the session again.
+
+The ledger lives in `~/.claude/orchestra/budget.json`, per day and per session,
+45 days deep, so a restart does not reset today's total.
+
+---
+
+## Policy: rules a repository can carry
+
+An approval rule is one operator's accumulated "always allow" clicks, on one
+machine. It cannot be reviewed, shared or required. A team that wants "no agent
+runs `rm -rf` in this repo, ever" has nowhere to put that sentence.
+
+`.orchestra-policy.json`, committed next to the code it governs, is that place.
+It is read from a session's working directory upward, so a policy at the
+repository root covers every agent working anywhere inside it, and the nearest
+one wins.
+
+```json
+{
+  "version": 1,
+  "name": "backend",
+  "rules": [
+    { "tool": "Bash", "match": "rm -rf*", "decision": "deny", "reason": "never from an agent" },
+    { "tool": "Bash", "match": "git push*", "decision": "deny" },
+    { "tool": "Read", "decision": "allow" },
+    { "tool": "*", "match": "*secret*", "decision": "deny" }
+  ],
+  "defaultDecision": "ask",
+  "budget": { "session": 5 }
+}
+```
+
+Four properties make it worth having rather than being a second rule list:
+
+- **A policy deny is final.** No stored rule and no click can lift it. You can
+  still edit the file, but that is a commit, in review, in history, which is the
+  entire point.
+- **It is consulted before anything else,** so it constrains the shortcut and
+  not just the prompt. A policy that says `ask` deliberately suppresses your
+  stored rules for that call.
+- **Deny is evaluated before allow, regardless of the order rules are written
+  in.** The file is a boundary, not a first-match dispatch table; relying on
+  ordering for a safety rule is how a reviewer misses one.
+- **`allow` is ignored by default.** This file arrives with `git clone`. A
+  hostile repository carrying `{"tool": "Bash", "decision": "allow"}` would turn
+  cloning it into a way to auto-approve every command an agent runs in that
+  checkout, before a human ever sees one. So a policy read out of a repository
+  may only ever tighten: deny and ask always apply, allow does not, unless you
+  set `ORCHESTRA_TRUST_REPO_POLICY=1` for repositories you control. The settings
+  pane says so rather than showing rules that look active and are not.
+
+The same asymmetry governs the budget line: `budget.session` can lower the
+global per-session cap for that repository and can never raise it.
+
+A malformed rule is dropped and reported rather than failing the file, but a
+file that will not parse at all holds everything it would have governed at
+`ask`. A typo must not silently read as "no policy".
+
+**Settings > Safety** shows the policy in force for the session you are looking
+at. It is read only, deliberately: a policy a settings pane could edit would be
+a preference with extra steps.
+
+---
+
+## Agents on other machines
+
+Hooks reach Orchestra from anywhere that has `ORCHESTRA_URL` and a token, so an
+agent on a second machine could already have its permission requests answered
+here. What was missing is that the server had nowhere to put it: an event
+matching no local session was logged and dropped, and the agent existed in the
+approval queue and nowhere else.
+
+Now it is adopted. Point a `claude` on another box at this Orchestra (install
+the hooks there with `ORCHESTRA_URL` set to the tunnel) and it appears in the
+sidebar with full agent state: status, current tool, turns, cost, git-less but
+otherwise complete. It takes part in approvals, budgets, the timeline and the
+digest.
+
+An external agent has **no PTY**, so there is no terminal and it accepts no
+input. Nothing typed at a panel and nothing from the quota auto resume can reach
+a machine Orchestra does not own.
+
+Adoption is precise about what it will not do. An event carrying no Claude
+session id has nothing stable to key on, so it is ignored rather than creating a
+record per event. An event whose directory matches two local sessions is the
+case where resolution already refuses to guess, and adopting there would hang a
+phantom agent beside two real ones. Records are keyed by host plus Claude
+session id, so a reconnecting agent lands back on its own row. Silence for 30
+minutes, not detachment, is what ends one.
+
+This grants no new access: those hooks already hold a valid token and their
+approvals already queued here. It only decides whether the agent is visible
+while that happens. `ORCHESTRA_ADOPT_EXTERNAL=0` turns it off.
+
+---
+
+## The recap: while you were away
+
+The **Recap** tab answers the question you actually have after eight hours: what
+is blocked, what happened, what did it cost.
+
+It introduces no new data. The hook timeline, the costs, the quota blocks and
+the budget locks all already existed and were unreadable, scattered across a
+JSONL file nobody opens and six scrollbacks. The digest orders them by what a
+returning operator has to act on, leads with a handful of plain sentences that
+survive being read on a phone, and puts the button that unblocks a thing next to
+the thing.
+
+Pick a window (1h, 8h, 24h, 7d) or read `GET /api/digest?since=<epoch ms>`.
+
+---
+
+## Quota blocks and auto resume
+
+Claude Code stops when the account runs out of quota. The turn ends mid task, the session drops back to
+an idle prompt, and it stays there. The five hour window resets at an hour nobody chose, often
+overnight, so the work sits finished-but-unfinished until someone comes back and types one word.
+
+Orchestra can type that word.
+
+**Noticing.** No hook fires for a quota block. `Stop` cannot tell a finished turn from an interrupted
+one, and the statusLine snapshot says the *account* is exhausted without saying which of six panels got
+cut off. So the banner in the terminal is the signal: `lib/quota-limit.js` reads the bytes already on
+their way to the browser, strips the ANSI and the box drawing, and matches a short list of phrases
+against a rolling 8 KB window (the banner routinely spans two PTY flushes). This is the only screen
+reading left in Orchestra and it is not the `/usage` scraper that was removed in v2: nothing is spawned,
+no TUI is driven, no trust prompt is answered on your behalf.
+
+**Confirming.** A match is a suspicion. Before typing anything, `lib/auto-resume.js` re-reads the
+statusLine quota snapshot; a window still reporting 100% means the reset has not really landed, whatever
+the banner said, and the plan re-arms on the reset the account reports instead.
+
+**Resuming.** At the reset instant plus a grace period, one prompt is typed and submitted. Which prompt
+is yours to choose, in **Settings > Limits**.
+
+It is **off by default**, and while it is off Orchestra still shows you what is blocked and when it
+resets. It just does not type. Turning it on gives a background process permission to write into a live
+terminal unattended, which is why the refusals are the bulk of the feature:
+
+| It will not resume | Why |
+|---|---|
+| Anything that is not a Claude session | A shell would *execute* the word, not prompt with it |
+| A session holding a permission prompt | The next line would be read as the menu answer, deciding a permission for you |
+| A session still producing output | Typing into a live render lands anywhere but the prompt |
+| A locked session | Locking a panel means hands off, including ours |
+| More than `maxAttempts` times | A session that keeps re-blocking is left alone rather than looped |
+| Every blocked session at once | They are staggered; releasing six agents into a fresh window re-consumes it and they block again together |
+
+The prompt itself is flattened to one printable line before it is sent: control characters and escape
+sequences become spaces, so a pasted multi-line string cannot submit halfway through and leave the rest
+to be read as a second prompt, and cannot drive the TUI.
+
+Timing is checked on a five second wall-clock sweep rather than a `setTimeout`, because a laptop that
+slept through the reset would otherwise wake with a timer that fires hours late or not at all.
+
+Settings persist to `~/.claude/orchestra/auto-resume.json`. The API is `GET`/`PUT /api/auto-resume`,
+`POST /api/auto-resume/<sessionId>/now` to resume one immediately, and `DELETE /api/auto-resume/<sessionId>`
+to cancel a plan.
 
 ---
 
@@ -404,6 +692,22 @@ loaded xterm from a CDN while claiming to be fully local.
 unless you set `ORCHESTRA_ALLOW_REMOTE=1`, and even then it logs a warning on every start, because
 anyone who reaches that port and holds the token gets a shell.
 
+**A repository cannot grant itself permissions.** `.orchestra-policy.json` is read from the working
+directory, which means it can arrive by cloning someone else's code. Its `deny` and `ask` rules are
+obeyed, its `allow` rules are not, and its budget line may only lower a cap. Turning allows on is an
+explicit `ORCHESTRA_TRUST_REPO_POLICY=1`, the same distinction `.orchestra.json` already draws between
+a local operator relaxing the permission model and a cloned file relaxing it for them.
+
+**Adopting an agent from another machine grants no new access.** Those hooks already hold a valid token
+and their approvals already queued here; adoption only decides whether the agent is visible while that
+happens. An external agent has no PTY, so nothing typed in the UI can reach the machine it runs on.
+`ORCHESTRA_ADOPT_EXTERNAL=0` turns it off.
+
+**Push payloads are encrypted to the subscribed browser.** RFC 8291 with `aes128gcm`: the push service
+forwards ciphertext it cannot read, and the VAPID keypair stays in `~/.claude/orchestra/push.json` at
+mode `0600`. The subscription list is never handed back out by the API, because the endpoint plus its
+keys is what would let someone else deliver notifications to your devices.
+
 **Also enforced:** at most 24 concurrent sessions, 400 client messages per second per socket, a 1 MB
 cap on a single inbound WebSocket frame, PTY reads paused above 4 MB of unflushed socket backlog, and a
 30 second heartbeat that terminates dead sockets.
@@ -434,6 +738,22 @@ All optional. Orchestra runs with none of these set.
 | `ORCHESTRA_DETACH_TTL` | `0` | Seconds a detached **Claude** session survives unwatched. `0` means forever |
 | `ORCHESTRA_SHELL_DETACH_TTL` | `86400` | Same, for plain shell sessions |
 | `ORCHESTRA_CLAUDE_BIN` | `claude` | Path to the Claude Code binary |
+| `ORCHESTRA_AUTO_RESUME` | `0` | Resume quota-blocked sessions automatically. Off unless you say otherwise |
+| `ORCHESTRA_AUTO_RESUME_TEXT` | `continue` | The prompt typed when the quota comes back |
+| `ORCHESTRA_AUTO_RESUME_GRACE` | `60` | Seconds waited past the reset instant before typing |
+| `ORCHESTRA_AUTO_RESUME_STAGGER` | `30` | Seconds between two sessions resuming |
+| `ORCHESTRA_AUTO_RESUME_MAX` | `3` | Resumes tried on one session before it is left alone |
+| `ORCHESTRA_AUTO_RESUME_WAIT` | `600` | Seconds a due resume waits for a session to be safe to type into |
+| `ORCHESTRA_BUDGET` | `0` | Enforce spend caps. Off unless you say otherwise |
+| `ORCHESTRA_BUDGET_SESSION` | `0` | USD one session may spend before it is locked. `0` is no cap |
+| `ORCHESTRA_BUDGET_DAILY` | `0` | USD per calendar day across every session. `0` is no cap |
+| `ORCHESTRA_BUDGET_ACTION` | `lock` | `lock` freezes the session at the cap, `warn` only alerts |
+| `ORCHESTRA_PUSH_SUBJECT` | `mailto:orchestra@localhost` | The `sub` claim in every VAPID token |
+| `ORCHESTRA_ADOPT_EXTERNAL` | `1` | Show agents this server did not spawn but whose hooks reach it |
+| `ORCHESTRA_TRUST_REPO_POLICY` | `0` | Honour `allow` rules from a repository's policy file. Deny and ask always apply |
+
+These are the defaults **Settings > Limits** starts from; the panel writes
+`~/.claude/orchestra/auto-resume.json`, which wins on later boots.
 
 Booleans accept `0`, `false`, `no`, `off` as false; anything else present counts as true.
 
@@ -449,6 +769,9 @@ State lives under `~/.claude/orchestra/`:
 session-token          the access token, mode 0600
 sessions.json          live sessions, so a restart can report what was lost
 approval-rules.json    persisted "always" rules (+ .bak)
+auto-resume.json       quota auto resume settings, mode 0600
+budget.json            spend caps and the per-day ledger, mode 0600
+push.json              VAPID keypair and device subscriptions, mode 0600
 audit.log              append-only decision log, secrets redacted
 events/YYYY-MM-DD.jsonl  hook timeline, rotated at 20 MB, secrets redacted
 races/<race-id>/<variant>/  race worktrees
@@ -468,13 +791,22 @@ claude-orchestra/
 │   ├── security.js           token compare, Origin/Host checks, CSP
 │   ├── protocol.js           the wire contract, shared verbatim with the browser
 │   ├── ring-buffer.js        sequenced scrollback, so reattach replays only the tail
-│   ├── session-manager.js    PTY lifecycle, attach/detach, status machine
+│   ├── session-manager.js    PTY lifecycle, attach/detach, status machine, external agents
 │   ├── hook-bus.js           ingests hook events, applies them, persists the timeline
 │   ├── approvals.js          the long-poll permission queue, rules, audit log
+│   ├── policy.js             .orchestra-policy.json, consulted ahead of any stored rule
+│   ├── args-policy.js        refuses shell metacharacters in launch arguments
+│   ├── redact.js             strips secrets before anything is written to disk
 │   ├── race.js               worktrees, diffs, adoption, scoreboard
 │   ├── usage.js              quota snapshot + transcript aggregation
 │   ├── usage-parser.js       pure parsers for the above
+│   ├── quota-limit.js        recognises a quota block in a stream of terminal bytes
+│   ├── auto-resume.js        types the prompt back when the window resets
+│   ├── budget.js             spend caps, the per-day ledger, and the lock that enforces them
+│   ├── digest.js             the recap: what happened while nobody was watching
+│   ├── push.js               RFC 8291 / 8292 Web Push, no dependency
 │   ├── projects.js           recent-project index from ~/.claude
+│   ├── project-identity.js   names and colours derived from the working directory
 │   ├── workspace.js          .orchestra.json validation and expansion
 │   ├── hooks-install.js      safe merge into ~/.claude/settings.json
 │   └── which.js              PATH resolution, so we spawn binaries not shell strings
@@ -484,10 +816,11 @@ claude-orchestra/
 │   └── quota-hook.js         statusLine quota snapshot
 ├── public/
 │   ├── index.html            skeleton, nonce and bootstrap injection points
+│   ├── sw.js                 service worker: the only code that runs with the tab closed
 │   └── js/                   app, dom, store, protocol, connection, terminal-view,
 │                             sidebar, supervision, approvals-ui, race-ui, launcher,
-│                             settings, notifications
-└── test/                     88 node:test tests
+│                             settings, notifications, setup, push, digest-view
+└── test/                     259 node:test tests
 ```
 
 ### How it flows
@@ -497,9 +830,10 @@ claude-orchestra/
 +------------+                  +--------------------+          +----------------+
 |  xterm.js  |                  |  session-manager   |          |     PTY        |
 |  sidebar   | <== WebSocket == |  ring-buffer       | <=====>  |  claude ...    |
-|  approvals |   output/input   |  approvals queue   |  bytes   |                |
-|  race view |   session state  |  hook-bus          |          +-------+--------+
-+------------+                  +---------^----------+                  |
+|  approvals |   output/input   |  approvals+policy  |  bytes   |                |
+|  recap     |   session state  |  hook-bus          |          +-------+--------+
++------------+                  |  budget, resume    |                  |
+                                +---------^----------+                  |
                                           |                             | env:
                         POST /api/hooks/event/<Event>                   | ORCHESTRA_SESSION_ID
                         POST /api/approvals (held open)                 | ORCHESTRA_URL
@@ -517,6 +851,17 @@ by session id first, then by Claude's own session id, then by unique cwd, and wh
 share a cwd the event is reported unmatched rather than attributed to the wrong agent.
 
 The approval route is the same loop with the response held open until a human answers.
+
+**Two things extend that picture.** Nothing about the loop requires the agent to be on this machine:
+a `claude` anywhere that can reach `ORCHESTRA_URL` with a valid token posts to the same endpoint, and
+an event matching no local session is adopted as an external agent rather than dropped. It gets full
+agent state, approvals, budgets and a place in the recap; it has no PTY, so it has no terminal and
+accepts no input.
+
+And the loop no longer ends at an open browser tab. A permission request, a budget lock, a resumed
+session and a stall are also delivered as encrypted Web Push messages, which a service worker shows
+with the tab closed. That is the only path that reaches a phone in a pocket, and it is the difference
+between remote approval being a demo and being usable.
 
 For the message-by-message protocol, the session state machine and the module contracts, see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -536,7 +881,7 @@ For the message-by-message protocol, the session state machine and the module co
 | Killing sessions on socket close | Closing a tab now detaches. This is the single change the rewrite exists for |
 | Binding `0.0.0.0` | Loopback by default, non-loopback refused without `ORCHESTRA_ALLOW_REMOTE=1` |
 
-Nothing carries over automatically. Reinstall the hooks from Settings > Hooks, and write an
+Nothing carries over automatically. Reinstall the hooks from Settings > Setup, and write an
 `.orchestra.json` for any layout you want back.
 
 ---
@@ -544,7 +889,7 @@ Nothing carries over automatically. Reinstall the hooks from Settings > Hooks, a
 ## Development
 
 ```bash
-npm test     # 88 node:test tests
+npm test     # 259 node:test tests
 npm run lint # syntax check
 npm run serve  # bare server, no browser
 ```

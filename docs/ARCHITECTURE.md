@@ -21,7 +21,9 @@ lib/               the whole product. Every module is constructible with injecte
                    {config, logger} so it can be tested without a server.
 hooks/             standalone scripts run by Claude Code. They require nothing from lib/.
 public/js/         ES modules, no build step, served as written.
-test/              node:test. 88 tests.
+public/sw.js       the service worker. The only code that runs with the tab closed,
+                   and the only file in public/ that is not an ES module.
+test/              node:test. 259 tests.
 ```
 
 Two rules the layout enforces:
@@ -281,6 +283,37 @@ keep showing a rule that was just revoked.
 
 #### `quota`
 Declared in `S2C`. Not currently emitted by the server: the Usage panel polls `GET /api/usage`.
+
+#### `budget`
+Broadcast whenever the ledger or the caps move.
+```json
+{ "t": "budget",
+  "settings": { "enabled": false, "sessionCap": 0, "dailyCap": 0, "action": "lock" },
+  "today": { "day": "2026-09-04", "total": 4.12,
+             "bySession": [ { "sessionId": "<id>", "name": "api worker", "cost": 4.12,
+                              "cap": 5, "raised": false, "locked": false, "live": true } ] },
+  "breaches": [ /* most recent first, capped at 20 */ ] }
+```
+`cap` is the effective cap, which is the configured one unless a repository
+policy asked for something stricter or an operator raised it by unlocking.
+`raised` says which of those happened.
+
+#### `auto-resume`
+Broadcast whenever a quota block is detected, a resume fires, or the settings change. Also carried in
+`ready` under the `autoResume` key, so a client that connects mid-block sees the same state.
+```json
+{ "t": "auto-resume",
+  "settings": { "enabled": false, "text": "continue", "graceSeconds": 60,
+                "staggerSeconds": 30, "maxAttempts": 3, "waitForIdleSeconds": 600 },
+  "plans": [ { "sessionId": "<id>", "name": "api worker", "state": "armed",
+               "window": "five_hour", "resetsAt": 1788526800000, "resetsText": "3pm",
+               "dueAt": 1788526860000, "attempts": 0, "lastSentAt": null,
+               "lastError": null } ] }
+```
+`state` is one of `armed` (waiting for the reset), `waiting` (reset passed, session not yet safe to type
+into), `sent`, `expired` (attempt cap reached, or never became safe) and `cancelled`. Plans are reported
+whether or not `settings.enabled` is true: with the feature off the client still shows what is blocked,
+it simply never sees a `sent`.
 
 #### `race`
 ```json
@@ -709,7 +742,7 @@ and like `server.js` it should stay assembly only.
 ## 9. Testing
 
 ```bash
-npm test    # node --test test/*.test.js, 88 tests
+npm test    # node --test test/*.test.js, 259 tests
 npm run lint
 ```
 
