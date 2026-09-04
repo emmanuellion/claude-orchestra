@@ -39,6 +39,9 @@ export const S2C = {
   APPROVAL_REQUEST: 'approval-request',
   APPROVAL_RESOLVED: 'approval-resolved',
   QUOTA: 'quota',
+  /** Quota blocked sessions and the resume settings, as one snapshot. */
+  AUTO_RESUME: 'auto-resume',
+  BUDGET: 'budget',
   RACE: 'race',
   ERROR: 'error',
   PONG: 'pong',
@@ -58,6 +61,7 @@ export const STATUS = {
 export const KIND = {
   CLAUDE: 'claude',
   SHELL: 'shell',
+  EXTERNAL: 'external',
   POWERSHELL: 'powershell',
 };
 

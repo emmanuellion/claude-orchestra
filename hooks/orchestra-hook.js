@@ -19,6 +19,7 @@
  */
 
 const fs = require('fs');
+const { hostname } = require('os');
 
 const REQUEST_TIMEOUT_MS = 1500;
 /** Covers a stdin that never reaches EOF, on top of the request timeout. */
@@ -134,6 +135,9 @@ async function main() {
     orchestraSessionId: process.env.ORCHESTRA_SESSION_ID || null,
     orchestraRaceId: process.env.ORCHESTRA_RACE_ID || null,
     orchestraRaceVariant: process.env.ORCHESTRA_RACE_VARIANT || null,
+    // Which machine this ran on. Only meaningful for an agent the server did
+    // not spawn: it is what lets one Orchestra tell two remote agents apart.
+    orchestraHost: hostname(),
   };
   if (truncated) body.orchestraTruncated = true;
   if (parseError) body.orchestraParseError = parseError.slice(0, 200);
