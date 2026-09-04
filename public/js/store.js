@@ -49,6 +49,9 @@ export const DEFAULT_PREFS = Object.freeze({
   /** Which top-level view is showing. */
   view: 'terminals',
 
+  /** Set once the first-run checklist has nothing required left to say. */
+  'setup.dismissed': false,
+
   // Keys owned by settings.js.
   notifications: true,
   confirmClose: true,
@@ -179,6 +182,10 @@ export class Store {
       races: [],
       projects: [],
       quota: null,
+      /** {settings, plans} from the server; never persisted, it is live state. */
+      autoResume: { settings: null, plans: [] },
+      /** {settings, today, breaches} from the budget guard. */
+      budget: null,
       events: [],
       connection: 'connecting',
       /** @type {string|null} */
@@ -290,6 +297,8 @@ export class Store {
     }
     if (Array.isArray(p.races)) this.setRaces(p.races);
     if (p.quota !== undefined) this.setQuota(p.quota);
+    if (p.autoResume !== undefined) this.setAutoResume(p.autoResume);
+    if (p.budget !== undefined) this.setBudget(p.budget);
     if (Array.isArray(p.events)) this.setEvents(p.events);
 
     // Restore the last panel only if the server still knows about it.
@@ -498,6 +507,45 @@ export class Store {
   setQuota(q) {
     this.state.quota = q || null;
     this.emit('quota', this.state.quota);
+  }
+
+  /**
+   * The auto resume snapshot. Settings and plans arrive together on `ready` and
+   * on every change, but a plans-only broadcast must not blank the settings the
+   * panel is rendering, so each half is replaced only when it is present.
+   *
+   * @param {{settings?: Object|null, plans?: Array}|null} payload
+   */
+  setAutoResume(payload) {
+    const p = isPlainObject(payload) ? payload : {};
+    const current = this.state.autoResume || { settings: null, plans: [] };
+    this.state.autoResume = {
+      settings: isPlainObject(p.settings) ? p.settings : current.settings,
+      plans: Array.isArray(p.plans) ? p.plans : current.plans,
+    };
+    this.emit('auto-resume', this.state.autoResume);
+  }
+
+  /**
+   * The spend ledger and caps. Replaced wholesale: the guard always sends its
+   * complete state, so merging would keep rows for sessions it has forgotten.
+   */
+  setBudget(state) {
+    this.state.budget = isPlainObject(state) ? state : null;
+    this.emit('budget', this.state.budget);
+  }
+
+  /** What one session has spent today, or null when the guard has no row. */
+  spendFor(sessionId) {
+    const today = this.state.budget && this.state.budget.today;
+    if (!today || !Array.isArray(today.bySession)) return null;
+    return today.bySession.find(row => row && row.sessionId === sessionId) || null;
+  }
+
+  /** The plan for one session, or null. Used by the sidebar badge. */
+  resumePlanFor(sessionId) {
+    const plans = (this.state.autoResume && this.state.autoResume.plans) || [];
+    return plans.find(plan => plan && plan.sessionId === sessionId) || null;
   }
 
   /** @param {"connecting"|"online"|"offline"} s */

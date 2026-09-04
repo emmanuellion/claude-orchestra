@@ -16,6 +16,9 @@ import { TerminalView, TERMINAL_THEMES } from './terminal-view.js';
 import { Sidebar } from './sidebar.js';
 import { SupervisionView } from './supervision.js';
 import { ApprovalsView } from './approvals-ui.js';
+import { DigestView } from './digest-view.js';
+import { PushClient } from './push.js';
+import { SetupCard } from './setup.js';
 import { RaceView } from './race-ui.js';
 import { Launcher } from './launcher.js';
 import {
@@ -31,12 +34,48 @@ import { Notifications } from './notifications.js';
 
 const BOOT = window.__ORCHESTRA__ || {};
 
+/**
+ * The top level tabs. `hint` is the tooltip, and it is the only place the app
+ * gets to say what a view is *for*: six one-word labels tell someone who
+ * already knows the product exactly nothing on their first morning.
+ */
 const VIEWS = [
-  { id: 'terminals', label: 'Terminals', icon: 'M4 17l6-6-6-6M12 19h8' },
-  { id: 'supervision', label: 'Agents', icon: 'M3 3v18h18M7 15l4-4 3 3 5-6' },
-  { id: 'approvals', label: 'Approvals', icon: 'M9 12l2 2 4-4M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7z' },
-  { id: 'race', label: 'Races', icon: 'M4 4v16M4 4h12l-2 4 2 4H4' },
-  { id: 'launcher', label: 'Projects', icon: 'M3 7h6l2 2h10v10H3z' },
+  {
+    id: 'terminals',
+    label: 'Terminals',
+    hint: 'The agents themselves. Type here like any terminal.',
+    icon: 'M4 17l6-6-6-6M12 19h8',
+  },
+  {
+    id: 'supervision',
+    label: 'Agents',
+    hint: 'Every agent at a glance: what it is doing, for how long, at what cost.',
+    icon: 'M3 3v18h18M7 15l4-4 3 3 5-6',
+  },
+  {
+    id: 'approvals',
+    label: 'Approvals',
+    hint: 'Tool calls an agent is blocked on, waiting for you to allow or deny.',
+    icon: 'M9 12l2 2 4-4M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7z',
+  },
+  {
+    id: 'race',
+    label: 'Races',
+    hint: 'Run one prompt several ways in isolated worktrees, then keep the best.',
+    icon: 'M4 4v16M4 4h12l-2 4 2 4H4',
+  },
+  {
+    id: 'digest',
+    label: 'Recap',
+    hint: 'What happened while you were not watching, and what is waiting for you.',
+    icon: 'M4 5h16v14H4zM4 9h16M8 3v4M16 3v4',
+  },
+  {
+    id: 'launcher',
+    label: 'Projects',
+    hint: 'Start an agent in a project directory.',
+    icon: 'M3 7h6l2 2h10v10H3z',
+  },
 ];
 
 /** How long the server is given to tear a session down before we recreate it. */
@@ -65,7 +104,16 @@ class App {
     });
 
     // Every view reads only `token` off this and does its own fetching.
-    this.api = { token: BOOT.token || this.connection.token };
+    // One request helper for every panel that talks REST. The settings pane,
+    // the digest and the push client all went through their own copy of this
+    // before, and only one of them handled a non-JSON error body.
+    this.api = {
+      token: BOOT.token || this.connection.token,
+      request: (method, path, body) => this.apiFetch(path, {
+        method: String(method || 'GET').toUpperCase(),
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }),
+    };
   }
 
   start() {
@@ -73,6 +121,13 @@ class App {
     // Must precede mountViews: the settings panel keeps the reference it is
     // handed, so a later instance would never reach it.
     this.notifications = new Notifications(this.store, { logger: console }).start();
+
+    // Push is what reaches a phone with the tab closed, which is the only case
+    // remote approval was ever really for. Registering early means an already
+    // subscribed browser starts receiving again on reload without a click.
+    this.push = new PushClient(this.api, { logger: console });
+    this.push.register().catch(() => { /* reported in the settings pane */ });
+    this.disposables.add(this.push.listen((view, sessionId) => this.setView(view, sessionId)));
 
     this.buildChrome();
     this.mountViews();
@@ -236,7 +291,7 @@ class App {
         'aria-controls': `view-${v.id}`,
         tabIndex: -1,
         dataset: { view: v.id },
-        title: v.label,
+        title: v.hint ? `${v.label}: ${v.hint}` : v.label,
         onclick: () => this.setView(v.id),
       }, svg(v.icon, { class: 'view-tab-icon' }), h('span', { class: 'view-tab-label', text: v.label }));
       tabs.appendChild(btn);
@@ -419,6 +474,24 @@ class App {
       store: this.store, connection: this.connection, api: this.api,
     }).mount();
 
+    this.digest = new DigestView(document.getElementById('view-digest'), {
+      api: this.api, actions, logger: console,
+    }).mount();
+
+    // Above the views, not inside one: every .view is absolutely positioned
+    // over the whole area, so a card placed in one would be invisible from the
+    // others, which is where a novice is most likely to be lost.
+    this.setup = new SetupCard(document.getElementById('main'), {
+      store: this.store,
+      api: this.api,
+      actions,
+      push: this.push,
+      // Resolved lazily: the settings panel is built after this one.
+      openSettings: (tab) => this.settings.openPanel(tab),
+      logger: console,
+    }).mount();
+    this.disposables.add(() => this.setup.destroy());
+
     this.race = new RaceView(document.getElementById('view-race'), {
       store: this.store, connection: this.connection, api: this.api,
     }).mount();
@@ -436,6 +509,7 @@ class App {
       connection: this.connection,
       api: this.api,
       notifications: this.notifications,
+      push: this.push,
       logger: console,
     }).mount();
 
@@ -476,6 +550,7 @@ class App {
       requestAnimationFrame(() => this.fitAll());
     }
     if (id === 'supervision' && this.supervision.refresh) this.supervision.refresh();
+    if (id === 'digest' && this.digest.activate) this.digest.activate();
     if (id === 'launcher' && this.launcher.activate) this.launcher.activate();
     if (id === 'approvals' && this.approvals.render) this.approvals.render();
   }
@@ -721,8 +796,15 @@ class App {
     container.appendChild(h('div', { class: 'grid-empty' },
       svg('M12 15a3 3 0 100-6 3 3 0 000 6zM5 8V6a1 1 0 011-1h2M19 8V6a1 1 0 00-1-1h-2M5 16v2a1 1 0 001 1h2M19 16v2a1 1 0 01-1 1h-2', { class: 'grid-empty-icon' }),
       h('p', { class: 'grid-empty-title', text: 'No agents running' }),
-      h('p', { class: 'grid-empty-hint', text: 'Pick a project to start one where the work is.' }),
-      h('button', { class: 'grid-empty-btn', text: 'Open projects', onclick: () => this.setView('launcher') })));
+      h('p', { class: 'grid-empty-hint', text: 'Pick a project directory and Orchestra starts a Claude Code session in it, named and coloured after the project.' }),
+      h('div', { class: 'grid-empty-actions' },
+        h('button', { class: 'grid-empty-btn', text: 'Open projects', onclick: () => this.setView('launcher') }),
+        h('button', {
+          class: 'grid-empty-btn grid-empty-btn-ghost',
+          text: 'Settings',
+          title: 'Hooks, safety, limits and remote access',
+          onclick: () => this.settings.openPanel('setup'),
+        }))));
   }
 
   onTerminalEvent(id, ev) {

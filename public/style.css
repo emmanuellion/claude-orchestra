@@ -4569,6 +4569,495 @@ body.resizing #sidebar-resize::after {
   font-size: 11px;
 }
 
+/* -- the first run checklist ----------------------------------------------- */
+
+/* Sits above the views, like the orphan bar, because every .view is absolutely
+   positioned over the whole area: a card inside one would be invisible from the
+   others, which is exactly where a lost novice is standing. */
+.setup {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.setup-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.setup-title {
+  font-size: 13px;
+}
+
+.setup-sub {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.setup-close {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+
+.setup-close:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.setup-close:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--surface-2);
+}
+
+.setup-error {
+  color: var(--red);
+  font-size: 11.5px;
+}
+
+.setup-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.setup-step:first-of-type {
+  border-top: 0;
+}
+
+.setup-mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.setup-step.is-done .setup-mark {
+  border-color: var(--green);
+  background: var(--green-dim);
+  color: var(--green);
+}
+
+.setup-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.setup-step-title {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.setup-step.is-done .setup-step-title {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.setup-optional {
+  margin-left: 7px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+.setup-detail {
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.setup-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.setup-btn {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.setup-btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--surface-3);
+}
+
+.setup-btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.setup-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.setup-btn:disabled {
+  opacity: .6;
+  cursor: progress;
+}
+
+@media (max-width: 700px) {
+  .setup-step {
+    flex-wrap: wrap;
+  }
+
+  .setup-actions {
+    padding-left: 30px;
+  }
+}
+
+/* One line under the tab strip saying what a grouped tab contains. */
+.settings-blurb {
+  margin-bottom: 4px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.grid-empty-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.grid-empty-btn-ghost {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.grid-empty-btn-ghost:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-3);
+}
+
+/* -- budget, policy, push -------------------------------------------------- */
+
+.settings-spend.is-locked {
+  border-left-color: var(--red);
+}
+
+.settings-rule.is-ask {
+  border-left-color: var(--yellow);
+}
+
+.settings-pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* -- the away digest ------------------------------------------------------- */
+
+.digest {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 900px;
+  padding: 20px;
+  margin: 0 auto;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.digest-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.digest-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.digest-sub,
+.digest-note {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.digest-controls {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.digest-range,
+.digest-refresh {
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.digest-range.is-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.digest-range:hover:not(.is-active),
+.digest-refresh:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--surface-3);
+}
+
+/* The summary in sentences. It is the part that survives being read on a
+   phone, so it is the part that gets the emphasis. */
+.digest-highlights {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.digest-highlight {
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.digest-alert {
+  padding: 10px 12px;
+  border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
+  background: var(--red-dim);
+  color: var(--red);
+  font-size: 12.5px;
+}
+
+.digest-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.digest-h3 {
+  color: var(--text-2);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.digest-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.digest-row.is-permission { border-left-color: var(--accent); }
+.digest-row.is-question   { border-left-color: var(--yellow); }
+.digest-row.is-budget     { border-left-color: var(--red); }
+.digest-row.is-quota      { border-left-color: var(--yellow); }
+.digest-row.is-giveup     { border-left-color: var(--red); }
+.digest-row.is-resumed    { border-left-color: var(--green); }
+
+.digest-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.digest-row-title {
+  font-size: 13px;
+}
+
+.digest-row-detail {
+  color: var(--text-2);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.digest-row-when {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.digest-row-btn {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.digest-row-btn:hover {
+  border-color: var(--border-hover);
+}
+
+.digest-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.digest-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.digest-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.digest-stat-label {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.digest-tools,
+.digest-costs,
+.digest-exits {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+}
+
+.digest-tool,
+.digest-cost {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.digest-tool-name,
+.digest-cost-name {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.digest-tool-count,
+.digest-cost-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.digest-cost-project {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.digest-tool-fail {
+  color: var(--red);
+  font-size: 11px;
+}
+
+.digest-exit {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.digest-exit.is-bad {
+  color: var(--red);
+}
+
+/* -- auto resume ---------------------------------------------------------- */
+
+/* Reuses the rule list; only the left edge colour differs, and it carries the
+   one thing that matters at a glance: whether Orchestra is still going to act
+   on this session or has finished with it. */
+.settings-resume {
+  border-left-color: var(--border);
+}
+
+.settings-resume.is-armed {
+  border-left-color: var(--yellow);
+}
+
+.settings-resume.is-waiting {
+  border-left-color: var(--accent);
+}
+
+.settings-resume.is-sent {
+  border-left-color: var(--green);
+}
+
+.settings-resume.is-expired {
+  border-left-color: var(--red);
+}
+
+.settings-resume .settings-rule-decision {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 /* -- shortcuts ------------------------------------------------------------ */
 
 .settings-shortcuts {

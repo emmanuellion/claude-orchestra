@@ -76,13 +76,50 @@ const HOOK_DESCRIPTIONS = {
   [HOOK_EVENT.SESSION_END]: 'Records why an agent session ended.',
 };
 
+/**
+ * Six tabs, not the nine these settings would otherwise need.
+ *
+ * Approvals and policy are one question asked twice (what may an agent do), and
+ * quota and budget are another (what happens when it runs out). Splitting them
+ * gave every pane an accurate name and left nobody able to guess which one to
+ * open. Grouping them means a novice looking for "stop it spending money" has
+ * one plausible place to look, and nothing was removed to get there.
+ *
+ * The blurb is shown under the tab strip so the grouping explains itself.
+ */
 const TABS = [
-  ['general', 'General'],
-  ['hooks', 'Hooks'],
-  ['approvals', 'Approvals'],
-  ['shortcuts', 'Shortcuts'],
-  ['remote', 'Remote'],
+  ['setup', 'Setup', 'Hooks, and whether Orchestra can see your agents at all.'],
+  ['general', 'General', 'Appearance, notifications, and how the sidebar sorts.'],
+  ['safety', 'Safety', 'What an agent is allowed to do: live approvals, and policy committed to a repo.'],
+  ['limits', 'Limits', 'What happens when an agent runs out: quota resets, and spend caps.'],
+  ['remote', 'Remote', 'Reaching Orchestra from another device, and push notifications.'],
+  ['shortcuts', 'Shortcuts', 'Keyboard bindings.'],
 ];
+
+/**
+ * The numeric auto resume settings, with the bounds lib/auto-resume.js clamps
+ * to. Duplicated rather than fetched because the panel has to validate before
+ * it sends, and a silently clamped value the user did not choose is worse than
+ * a rejected one they can see.
+ */
+const RESUME_NUMBERS = [
+  ['graceSeconds', 'Wait after the reset', 0, 3600,
+    'Seconds past the reset instant before typing. Resets are not clock exact.'],
+  ['staggerSeconds', 'Gap between sessions', 0, 900,
+    'Seconds between two resumes. Releasing every blocked agent at once re-consumes the window they were just given.'],
+  ['maxAttempts', 'Attempts per session', 1, 10,
+    'How many times one session is resumed before Orchestra leaves it alone.'],
+  ['waitForIdleSeconds', 'Give up after', 30, 7200,
+    'Seconds a due resume waits for a session that is busy or holding a permission prompt.'],
+];
+
+const RESUME_STATE_TEXT = {
+  armed: 'waiting for the reset',
+  waiting: 'reset passed, waiting for the session to settle',
+  sent: 'resumed',
+  expired: 'given up',
+  cancelled: 'cancelled',
+};
 
 function makeLogger(logger) {
   const c = typeof console !== 'undefined' ? console : null;
@@ -679,6 +716,12 @@ export class SettingsPanel {
     this._mounted = false;
 
     this.hooks = { data: null, loaded: false, loading: false, error: null, busy: false, result: null };
+    this.resume = { settings: null, plans: [], loaded: false, loading: false, error: null, saving: false };
+    this.budget = { data: null, loaded: false, loading: false, error: null };
+    this.policy = { data: null, cwd: undefined, loading: false, error: null };
+    this.push = { subscribed: null, devices: [] };
+    this.pushClient = deps.push || null;
+    this._unsubscribeResume = null;
     this.approvals = { rules: [], loaded: false, loading: false, error: null, gateError: null };
     this.shortcutErrors = [];
     this.recording = null;
@@ -691,10 +734,24 @@ export class SettingsPanel {
     this._mounted = true;
     this._build();
     this.root.hidden = true;
+    // Plans change without anyone touching this panel: a session blocks, a
+    // resume fires. Subscribing keeps the open pane honest instead of showing
+    // whatever was true when it was opened.
+    if (this.store && typeof this.store.on === 'function') {
+      this._unsubscribeResume = this.store.on('auto-resume', (snapshot) => {
+        if (!snapshot) return;
+        if (snapshot.settings) this.resume.settings = snapshot.settings;
+        if (Array.isArray(snapshot.plans)) this.resume.plans = snapshot.plans;
+        this.resume.loaded = true;
+        if (this.open && this.tab === 'limits') this._renderPane();
+      });
+    }
     return this;
   }
 
   destroy() {
+    if (typeof this._unsubscribeResume === 'function') this._unsubscribeResume();
+    this._unsubscribeResume = null;
     document.removeEventListener('keydown', this._onKeyDown, true);
     clear(this.root);
     this._nodes = {};
@@ -789,8 +846,9 @@ export class SettingsPanel {
     const tabs = this._nodes.tabs;
     if (!tabs) return;
     clear(tabs);
-    for (const [id, label] of TABS) {
+    for (const [id, label, hint] of TABS) {
       const b = button(`settings-tab${this.tab === id ? ' is-active' : ''}`, label, () => this.setTab(id));
+      if (hint) b.title = hint;
       b.setAttribute('role', 'tab');
       b.setAttribute('aria-selected', this.tab === id ? 'true' : 'false');
       tabs.appendChild(b);
@@ -801,11 +859,582 @@ export class SettingsPanel {
     const pane = this._nodes.pane;
     if (!pane) return;
     clear(pane);
+    const blurb = (TABS.find(([id]) => id === this.tab) || [])[2];
+    if (blurb) pane.appendChild(el('p', 'settings-blurb', blurb));
+
     if (this.tab === 'general') this._renderGeneral(pane);
-    else if (this.tab === 'hooks') this._renderHooks(pane);
-    else if (this.tab === 'approvals') this._renderApprovals(pane);
-    else if (this.tab === 'shortcuts') this._renderShortcuts(pane);
+    else if (this.tab === 'setup') this._renderHooks(pane);
+    else if (this.tab === 'safety') {
+      // Two panes, one question. The live queue first, because that is what a
+      // person is looking at when something is blocked right now.
+      this._renderApprovals(pane);
+      this._renderPolicy(pane);
+    } else if (this.tab === 'limits') {
+      this._renderQuota(pane);
+      this._renderBudget(pane);
+    } else if (this.tab === 'shortcuts') this._renderShortcuts(pane);
     else this._renderRemote(pane);
+  }
+
+  /**
+   * Auto resume: what happens when a quota block expires while nobody is here.
+   *
+   * The pane is deliberately blunt about the trade. Switching this on gives a
+   * server permission to type into a terminal unattended, so the copy says so
+   * and the control that does it sits next to the ones that bound it.
+   */
+  _renderQuota(pane) {
+    const section = el('section', 'settings-section');
+    section.appendChild(el('h3', 'settings-h3', 'Resume after a quota block'));
+    section.appendChild(el(
+      'p',
+      'settings-lead',
+      'When Claude Code runs out of quota mid-session it stops at an idle prompt and stays there,'
+      + ' even after the window resets hours later. Orchestra can notice the block, wait for the'
+      + ' reset, and send one prompt to pick the work back up.',
+    ));
+
+    if (this.resume.loading && !this.resume.settings) {
+      section.appendChild(el('p', 'settings-note', 'Reading the resume settings...'));
+      pane.appendChild(section);
+      return;
+    }
+    if (!this.resume.settings) {
+      if (this.resume.error) {
+        const err = el('div', 'settings-alert settings-alert-error');
+        err.appendChild(el('strong', null, 'Could not read the resume settings. '));
+        err.appendChild(el('span', null, this.resume.error));
+        err.appendChild(button('settings-btn', 'Retry', () => this._loadResume()));
+        section.appendChild(err);
+      } else {
+        section.appendChild(el('p', 'settings-note', 'The server returned no resume settings.'));
+      }
+      pane.appendChild(section);
+      // Once only: a server that keeps answering nothing must not loop here.
+      if (!this.resume.loaded) this._loadResume();
+      return;
+    }
+
+    const s = this.resume.settings;
+    const draft = { ...s };
+
+    const { wrap, input: toggle } = this._checkboxRow(
+      'Resume blocked sessions automatically',
+      'Off by default. While this is off Orchestra still shows what is blocked and when it resets,'
+      + ' it just will not type anything.',
+    );
+    toggle.checked = !!s.enabled;
+    toggle.addEventListener('change', () => { draft.enabled = toggle.checked; });
+    section.appendChild(wrap);
+
+    const text = el('input', 'settings-url-input');
+    text.type = 'text';
+    text.maxLength = 500;
+    text.value = s.text || '';
+    text.addEventListener('input', () => { draft.text = text.value; });
+    section.appendChild(field(
+      'Prompt to send',
+      text,
+      'Typed into the session and submitted, once, as if you had typed it. Line breaks and escapes'
+      + ' are flattened to spaces: this is one prompt, not a script.',
+    ));
+
+    for (const [key, label, min, max, hint] of RESUME_NUMBERS) {
+      const number = el('input', 'settings-number');
+      number.type = 'number';
+      number.min = String(min);
+      number.max = String(max);
+      number.step = '1';
+      number.value = String(s[key]);
+      number.addEventListener('input', () => { draft[key] = Number(number.value); });
+      section.appendChild(field(label, number, hint));
+    }
+
+    const actions = el('div', 'settings-inline');
+    const save = button('settings-btn settings-btn-primary', 'Save', async () => {
+      save.disabled = true;
+      await this._saveResume(draft);
+      save.disabled = false;
+    });
+    actions.appendChild(save);
+    if (this.resume.error) actions.appendChild(el('span', 'settings-error', this.resume.error));
+    section.appendChild(actions);
+
+    section.appendChild(this._resumePlans());
+    pane.appendChild(section);
+  }
+
+  /** What is blocked right now, and the two buttons a human has over it. */
+  _resumePlans() {
+    const box = el('div', 'settings-rules');
+    box.appendChild(el('h4', 'settings-h4', 'Blocked sessions'));
+
+    const plans = Array.isArray(this.resume.plans) ? this.resume.plans : [];
+    const live = plans.filter(p => p && p.state !== 'cancelled');
+    if (!live.length) {
+      box.appendChild(el('p', 'settings-note', 'Nothing is quota blocked. This list fills itself in when a session hits a limit.'));
+      return box;
+    }
+
+    const list = el('ul', 'settings-rule-list');
+    for (const plan of live) {
+      const row = el('li', `settings-rule settings-resume is-${plan.state}`);
+
+      const head = el('div', 'settings-rule-head');
+      head.appendChild(el('span', 'settings-rule-tool', plan.name || plan.sessionId));
+      head.appendChild(el('span', 'settings-rule-decision', RESUME_STATE_TEXT[plan.state] || plan.state));
+      row.appendChild(head);
+
+      const when = plan.resetsAt
+        ? `resets ${shortDate(plan.resetsAt)}`
+        : (plan.resetsText ? `resets ${plan.resetsText}` : 'reset time unknown');
+      const detail = [when];
+      if (plan.attempts) detail.push(`${plan.attempts} attempt${plan.attempts > 1 ? 's' : ''}`);
+      if (plan.lastSentAt) detail.push(`last resumed ${shortDate(plan.lastSentAt)}`);
+      row.appendChild(el('p', 'settings-note', detail.join('  |  ')));
+
+      if (plan.lastError) row.appendChild(el('p', 'settings-warn', plan.lastError));
+
+      const rowActions = el('div', 'settings-inline');
+      rowActions.appendChild(button('settings-btn', 'Resume now', async (e) => {
+        const btn = e && e.target ? e.target : null;
+        if (btn) btn.disabled = true;
+        try {
+          await this._request('POST', `/api/auto-resume/${encodeURIComponent(plan.sessionId)}/now`);
+          this.resume.error = null;
+        } catch (err) {
+          this.resume.error = err && err.message ? err.message : String(err);
+        }
+        this._renderPane();
+      }));
+      rowActions.appendChild(button('settings-btn settings-btn-ghost', 'Cancel', async (e) => {
+        const btn = e && e.target ? e.target : null;
+        if (btn) btn.disabled = true;
+        try {
+          await this._request('DELETE', `/api/auto-resume/${encodeURIComponent(plan.sessionId)}`);
+          this.resume.error = null;
+        } catch (err) {
+          this.resume.error = err && err.message ? err.message : String(err);
+        }
+        this._renderPane();
+      }));
+      row.appendChild(rowActions);
+
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+    return box;
+  }
+
+  async _loadResume() {
+    if (this.resume.loading) return;
+    this.resume.loading = true;
+    this.resume.error = null;
+    try {
+      const data = await this._request('GET', '/api/auto-resume');
+      this.resume.settings = (data && data.settings) || null;
+      this.resume.plans = (data && data.plans) || [];
+    } catch (e) {
+      this.resume.error = e && e.message ? e.message : String(e);
+      this.log.error(`settings: GET /api/auto-resume failed: ${this.resume.error}`);
+    } finally {
+      this.resume.loaded = true;
+      this.resume.loading = false;
+      if (this.tab === 'limits') this._renderPane();
+    }
+  }
+
+  /**
+   * Sends the whole draft, not a diff. The server clamps and re-validates, and
+   * answers with the settings actually in force, so a rejected prompt leaves
+   * the pane showing what is live rather than what was typed.
+   */
+  async _saveResume(draft) {
+    if (this.resume.saving) return;
+    this.resume.saving = true;
+    this.resume.error = null;
+    try {
+      const data = await this._request('PUT', '/api/auto-resume', draft);
+      if (data && data.settings) this.resume.settings = data.settings;
+      if (data && Array.isArray(data.plans)) this.resume.plans = data.plans;
+    } catch (e) {
+      this.resume.error = e && e.message ? e.message : String(e);
+    } finally {
+      this.resume.saving = false;
+      if (this.tab === 'limits') this._renderPane();
+    }
+  }
+
+  /**
+   * Spend caps, and the ledger they are judged against.
+   *
+   * Cost was always visible here; what was missing was the sentence "and then
+   * stop". A cap without an action is a receipt, so the action selector sits
+   * next to the numbers rather than being buried.
+   */
+  _renderBudget(pane) {
+    const section = el('section', 'settings-section');
+    section.appendChild(el('h3', 'settings-h3', 'Spend caps'));
+    section.appendChild(el(
+      'p',
+      'settings-lead',
+      'Orchestra reads the cost each agent reports through its hooks. A cap turns that number into'
+      + ' a limit: at the ceiling the session is locked, which freezes it without killing it, so its'
+      + ' context, its scrollback and its worktree all survive and one click lifts it.',
+    ));
+
+    const state = this.budget.data;
+    if (!state) {
+      section.appendChild(el('p', 'settings-note',
+        this.budget.error ? `Could not read the budget: ${this.budget.error}` : 'Reading the ledger...'));
+      pane.appendChild(section);
+      if (!this.budget.loaded) this._loadBudget();
+      return;
+    }
+
+    const s = state.settings;
+    const draft = { ...s };
+
+    const { wrap, input: toggle } = this._checkboxRow(
+      'Enforce spend caps',
+      'Off by default. While this is off the ledger below still fills in, nothing is ever locked.',
+    );
+    toggle.checked = !!s.enabled;
+    toggle.addEventListener('change', () => { draft.enabled = toggle.checked; });
+    section.appendChild(wrap);
+
+    for (const [key, label, hint] of [
+      ['sessionCap', 'Per session (USD)', 'One agent may spend this much before it is stopped. 0 means no cap.'],
+      ['dailyCap', 'Per day (USD)', 'Everything on this machine, across every session, per calendar day. 0 means no cap.'],
+    ]) {
+      const input = el('input', 'settings-number');
+      input.type = 'number';
+      input.min = '0';
+      input.step = '0.5';
+      input.value = String(s[key]);
+      input.addEventListener('input', () => { draft[key] = Number(input.value); });
+      section.appendChild(field(label, input, hint));
+    }
+
+    const action = el('select', 'settings-select');
+    for (const [value, text] of [
+      ['lock', 'Lock the session at the cap'],
+      ['warn', 'Only warn, never stop anything'],
+    ]) {
+      const option = el('option', null, text);
+      option.value = value;
+      action.appendChild(option);
+    }
+    action.value = s.action;
+    action.addEventListener('change', () => { draft.action = action.value; });
+    section.appendChild(field('At the cap', action));
+
+    const actions = el('div', 'settings-inline');
+    const save = button('settings-btn settings-btn-primary', 'Save', async () => {
+      save.disabled = true;
+      await this._saveBudget(draft);
+      save.disabled = false;
+    });
+    actions.appendChild(save);
+    if (this.budget.error) actions.appendChild(el('span', 'settings-error', this.budget.error));
+    section.appendChild(actions);
+
+    section.appendChild(this._budgetLedger(state));
+    pane.appendChild(section);
+  }
+
+  _budgetLedger(state) {
+    const box = el('div', 'settings-rules');
+    const today = state.today || { total: 0, bySession: [] };
+    box.appendChild(el('h4', 'settings-h4', `Today: $${Number(today.total || 0).toFixed(2)}`));
+
+    if (!today.bySession.length) {
+      box.appendChild(el('p', 'settings-note', 'Nothing has reported a cost today.'));
+      return box;
+    }
+
+    const list = el('ul', 'settings-rule-list');
+    for (const row of today.bySession.slice(0, 20)) {
+      const item = el('li', `settings-rule settings-spend${row.locked ? ' is-locked' : ''}`);
+      const head = el('div', 'settings-rule-head');
+      head.appendChild(el('span', 'settings-rule-tool', row.name || row.sessionId));
+      head.appendChild(el('span', 'settings-rule-decision', `$${Number(row.cost).toFixed(2)}`));
+      if (row.locked) head.appendChild(el('span', 'settings-warn', 'locked'));
+      item.appendChild(head);
+
+      const capText = row.cap
+        ? `cap $${Number(row.cap).toFixed(2)}`
+        : 'no cap';
+      item.appendChild(el('p', 'settings-note', `${capText}${row.live ? '' : ', session ended'}`));
+
+      if (row.locked) {
+        const rowActions = el('div', 'settings-inline');
+        rowActions.appendChild(button('settings-btn', 'Unlock and forgive', async (e) => {
+          if (e && e.target) e.target.disabled = true;
+          try {
+            this.budget.data = await this._request('POST', `/api/budget/${encodeURIComponent(row.sessionId)}/release`);
+            this.budget.error = null;
+          } catch (err) {
+            this.budget.error = err && err.message ? err.message : String(err);
+          }
+          this._renderPane();
+        }));
+        item.appendChild(rowActions);
+      }
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+
+    if (state.breaches && state.breaches.length) {
+      box.appendChild(el('h4', 'settings-h4', 'Recent caps reached'));
+      const hist = el('ul', 'settings-rule-list');
+      for (const b of state.breaches.slice(0, 8)) {
+        hist.appendChild(el('li', 'settings-note',
+          `${b.name || b.sessionId}: ${b.scope} cap, $${Number(b.spent).toFixed(2)} of $${Number(b.cap).toFixed(2)}`
+          + `${b.locked ? ', locked' : ''} at ${shortDate(b.at)}`));
+      }
+      box.appendChild(hist);
+    }
+    return box;
+  }
+
+  async _loadBudget() {
+    if (this.budget.loading) return;
+    this.budget.loading = true;
+    this.budget.error = null;
+    try {
+      this.budget.data = await this._request('GET', '/api/budget');
+    } catch (e) {
+      this.budget.error = e && e.message ? e.message : String(e);
+    } finally {
+      this.budget.loaded = true;
+      this.budget.loading = false;
+      if (this.tab === 'limits') this._renderPane();
+    }
+  }
+
+  async _saveBudget(draft) {
+    this.budget.error = null;
+    try {
+      this.budget.data = await this._request('PUT', '/api/budget', draft);
+    } catch (e) {
+      this.budget.error = e && e.message ? e.message : String(e);
+    } finally {
+      if (this.tab === 'limits') this._renderPane();
+    }
+  }
+
+  /**
+   * The policy governing the directory of the session you are looking at.
+   *
+   * Read only on purpose. A policy that a settings pane could edit would be a
+   * preference with extra steps; the value is that changing it is a commit
+   * somebody reviews.
+   */
+  _renderPolicy(pane) {
+    const section = el('section', 'settings-section');
+    section.appendChild(el('h3', 'settings-h3', 'Repository policy'));
+    section.appendChild(el(
+      'p',
+      'settings-lead',
+      'Approval rules are one operator’s clicks on one machine. A .orchestra-policy.json committed'
+      + ' to a repository is the same decision, shared and reviewable. It is consulted before any stored'
+      + ' rule, and a policy deny cannot be lifted by a click: only by editing the file.',
+    ));
+
+    const session = this.store && typeof this.store.activeSession === 'function'
+      ? this.store.activeSession()
+      : null;
+    const cwd = (session && session.cwd) || null;
+
+    const path = el('p', 'settings-path');
+    path.appendChild(el('span', 'settings-path-label', 'Looking in'));
+    path.appendChild(el('code', null, cwd || 'no session selected'));
+    section.appendChild(path);
+
+    const actions = el('div', 'settings-inline');
+    actions.appendChild(button('settings-btn', 'Check again', () => this._loadPolicy(cwd)));
+    section.appendChild(actions);
+
+    const info = this.policy.data;
+    if (this.policy.error) {
+      section.appendChild(el('p', 'settings-error', this.policy.error));
+    } else if (!info) {
+      section.appendChild(el('p', 'settings-note', 'Reading...'));
+      if (this.policy.cwd !== cwd) this._loadPolicy(cwd);
+    } else if (!info.found) {
+      section.appendChild(el('p', 'settings-note',
+        'No .orchestra-policy.json here or in any parent directory. Nothing is being enforced beyond your own rules.'));
+      section.appendChild(this._policyExample());
+    } else {
+      const p = info.policy;
+      const where = el('p', 'settings-path');
+      where.appendChild(el('span', 'settings-path-label', 'Policy file'));
+      where.appendChild(el('code', null, info.file));
+      section.appendChild(where);
+
+      if (p.broken) {
+        const alert = el('div', 'settings-alert settings-alert-error');
+        alert.appendChild(el('strong', null, 'This policy could not be parsed, so every tool call it would have covered is being asked. '));
+        alert.appendChild(el('span', null, info.error || ''));
+        section.appendChild(alert);
+      }
+      for (const w of info.warnings || []) section.appendChild(el('p', 'settings-warn', w));
+
+      const meta = [];
+      if (p.name) meta.push(p.name);
+      meta.push(`${p.ruleCount} rule${p.ruleCount === 1 ? '' : 's'}`);
+      if (p.defaultDecision) meta.push(`default ${p.defaultDecision}`);
+      if (p.sessionBudget) meta.push(`session cap $${Number(p.sessionBudget).toFixed(2)}`);
+      section.appendChild(el('p', 'settings-note', meta.join('  |  ')));
+
+      // Otherwise the list below shows allow rules that look active and are
+      // not, which is the worst way to learn about a safety default.
+      if (info.trustAllow === false && p.rules.some(r => r.decision === 'allow')) {
+        const note = el('div', 'settings-alert settings-alert-warn');
+        note.appendChild(el('strong', null, 'Allow rules in this file are being ignored. '));
+        note.appendChild(el('span', null,
+          'A policy arrives with git clone, so a repository is not allowed to grant permissions to an'
+          + ' agent working on it. Deny and ask still apply. Set '));
+        note.appendChild(el('code', null, 'ORCHESTRA_TRUST_REPO_POLICY=1'));
+        note.appendChild(el('span', null, ' to honour them for repositories you control.'));
+        section.appendChild(note);
+      }
+
+      if (p.rules.length) {
+        const list = el('ul', 'settings-rule-list');
+        for (const rule of p.rules) {
+          const item = el('li', `settings-rule is-${rule.decision === 'deny' ? 'deny' : (rule.decision === 'allow' ? 'allow' : 'ask')}`);
+          const head = el('div', 'settings-rule-head');
+          head.appendChild(el('span', 'settings-rule-decision', rule.decision));
+          head.appendChild(el('span', 'settings-rule-tool', rule.tool));
+          item.appendChild(head);
+          if (rule.match) item.appendChild(el('p', 'settings-rule-pattern', rule.match));
+          if (rule.reason) item.appendChild(el('p', 'settings-note', rule.reason));
+          list.appendChild(item);
+        }
+        section.appendChild(list);
+      }
+    }
+
+    pane.appendChild(section);
+  }
+
+  _policyExample() {
+    const box = el('div', 'settings-rules');
+    box.appendChild(el('h4', 'settings-h4', 'Commit this to try it'));
+    const pre = el('pre', 'settings-pre');
+    pre.textContent = JSON.stringify({
+      version: 1,
+      name: 'backend',
+      rules: [
+        { tool: 'Bash', match: 'rm -rf*', decision: 'deny', reason: 'never from an agent' },
+        { tool: 'Bash', match: 'git push*', decision: 'deny', reason: 'humans push' },
+        { tool: 'Read', decision: 'allow' },
+        { tool: 'Grep', decision: 'allow' },
+      ],
+      budget: { session: 5 },
+    }, null, 2);
+    box.appendChild(pre);
+    return box;
+  }
+
+  async _loadPolicy(cwd) {
+    this.policy.loading = true;
+    this.policy.error = null;
+    this.policy.cwd = cwd;
+    try {
+      const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : '';
+      this.policy.data = await this._request('GET', `/api/policy${query}`);
+    } catch (e) {
+      this.policy.error = e && e.message ? e.message : String(e);
+    } finally {
+      this.policy.loading = false;
+      if (this.tab === 'safety') this._renderPane();
+    }
+  }
+
+  /**
+   * Push subscription controls, in the Remote tab because that is the only
+   * place they matter: push exists so a permission request reaches the phone
+   * this tab is teaching you to connect.
+   */
+  _pushSection() {
+    const box = el('div', 'settings-rules');
+    box.appendChild(el('h4', 'settings-h4', 'Push notifications'));
+    box.appendChild(el('p', 'settings-note',
+      'Desktop notifications need this page open. Push reaches a locked phone, which is the only way'
+      + ' a permission request finds you when you are not at the desk.'));
+
+    const client = this.pushClient;
+    if (!client) {
+      box.appendChild(el('p', 'settings-note', 'No push client is wired up.'));
+      return box;
+    }
+    const why = client.unsupportedReason();
+    if (why) {
+      box.appendChild(el('p', 'settings-warn', why));
+      return box;
+    }
+
+    const status = el('p', 'settings-note', this.push.subscribed === null
+      ? 'Checking...'
+      : (this.push.subscribed ? 'This device is subscribed.' : 'This device is not subscribed.'));
+    box.appendChild(status);
+    if (this.push.subscribed === null) this._refreshPush();
+
+    const row = el('div', 'settings-inline');
+    const report = el('span', 'settings-note', '');
+
+    row.appendChild(button('settings-btn settings-btn-primary', this.push.subscribed ? 'Resubscribe' : 'Enable push', async (e) => {
+      if (e && e.target) e.target.disabled = true;
+      const out = await client.subscribe();
+      report.className = out.ok ? 'settings-note' : 'settings-error';
+      report.textContent = out.ok ? 'Subscribed.' : out.error;
+      await this._refreshPush();
+    }));
+
+    if (this.push.subscribed) {
+      row.appendChild(button('settings-btn', 'Send a test push', async (e) => {
+        if (e && e.target) e.target.disabled = true;
+        const out = await client.sendTest();
+        report.className = out.ok ? 'settings-note' : 'settings-error';
+        report.textContent = out.ok ? `Delivered to ${out.sent} device(s).` : out.error;
+        if (e && e.target) e.target.disabled = false;
+      }));
+      row.appendChild(button('settings-btn settings-btn-ghost', 'Unsubscribe', async (e) => {
+        if (e && e.target) e.target.disabled = true;
+        const out = await client.unsubscribe();
+        report.className = out.ok ? 'settings-note' : 'settings-error';
+        report.textContent = out.ok ? 'Unsubscribed.' : out.error;
+        await this._refreshPush();
+      }));
+    }
+    row.appendChild(report);
+    box.appendChild(row);
+
+    if (this.push.devices && this.push.devices.length) {
+      const list = el('ul', 'settings-rule-list');
+      for (const d of this.push.devices) {
+        list.appendChild(el('li', 'settings-note',
+          `${d.label || 'device'} via ${d.host}${d.lastSentAt ? `, last push ${shortDate(d.lastSentAt)}` : ''}`));
+      }
+      box.appendChild(list);
+    }
+    return box;
+  }
+
+  async _refreshPush() {
+    if (!this.pushClient) return;
+    try {
+      this.push.subscribed = await this.pushClient.isSubscribed();
+      const info = await this._request('GET', '/api/push/key');
+      this.push.devices = (info && info.subscriptions) || [];
+    } catch (e) {
+      this.push.subscribed = false;
+      this.log.warn(`settings: push status failed: ${e && e.message}`);
+    }
+    if (this.tab === 'remote') this._renderPane();
   }
 
   _renderGeneral(pane) {
@@ -1121,7 +1750,7 @@ export class SettingsPanel {
   }
 
   _renderHookTabs() {
-    if (this.tab === 'hooks' || this.tab === 'approvals') this._renderPane();
+    if (this.tab === 'setup' || this.tab === 'safety') this._renderPane();
   }
 
   /**
@@ -1303,7 +1932,7 @@ export class SettingsPanel {
     if (this.approvals.loading) return;
     this.approvals.loading = true;
     this.approvals.error = null;
-    if (this.tab === 'approvals') this._renderPane();
+    if (this.tab === 'safety') this._renderPane();
     try {
       const res = await this._request('GET', '/api/approvals');
       this.approvals.rules = Array.isArray(res && res.rules) ? res.rules : [];
@@ -1313,7 +1942,7 @@ export class SettingsPanel {
     } finally {
       this.approvals.loaded = true;
       this.approvals.loading = false;
-      if (this.tab === 'approvals') this._renderPane();
+      if (this.tab === 'safety') this._renderPane();
     }
   }
 
@@ -1325,7 +1954,7 @@ export class SettingsPanel {
       this.approvals.error = e && e.message ? e.message : String(e);
       this.log.error(`settings: DELETE /api/approvals/rules/${id} failed: ${this.approvals.error}`);
     }
-    if (this.tab === 'approvals') this._renderPane();
+    if (this.tab === 'safety') this._renderPane();
   }
 
   _shortcutMap() {
@@ -1477,6 +2106,7 @@ export class SettingsPanel {
       qrBox.appendChild(el('p', 'settings-note', `No QR code: ${e && e.message}. Copy the address above instead.`));
     }
     section.appendChild(qrBox);
+    section.appendChild(this._pushSection());
 
     const binding = el('div', loopback ? 'settings-alert settings-alert-ok' : 'settings-alert settings-alert-warn');
     if (loopback) {

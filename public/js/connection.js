@@ -431,6 +431,14 @@ export class Connection {
         this._toStore('setQuota', msg.quota !== undefined ? msg.quota : msg);
         break;
 
+      case S2C.AUTO_RESUME:
+        this._toStore('setAutoResume', { plans: msg.plans, settings: msg.settings });
+        break;
+
+      case S2C.BUDGET:
+        this._toStore('setBudget', msg);
+        break;
+
       case S2C.RACE:
         this._toStore('upsertRace', msg.race !== undefined ? msg.race : msg);
         break;
