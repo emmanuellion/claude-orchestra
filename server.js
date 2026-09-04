@@ -19,6 +19,11 @@ const { HookBus } = require('./lib/hook-bus');
 const { ApprovalQueue } = require('./lib/approvals');
 const { RaceManager } = require('./lib/race');
 const { UsageTracker } = require('./lib/usage');
+const { AutoResume } = require('./lib/auto-resume');
+const { Policy } = require('./lib/policy');
+const { BudgetGuard } = require('./lib/budget');
+const { Digest } = require('./lib/digest');
+const { PushSender } = require('./lib/push');
 const { ProjectIndex } = require('./lib/projects');
 const { Workspace } = require('./lib/workspace');
 const hooksInstall = require('./lib/hooks-install');
@@ -57,9 +62,15 @@ async function start(options = {}) {
 
   const sessions = new SessionManager();
   const hookBus = new HookBus({ sessions, config, logger });
-  const approvals = new ApprovalQueue({ sessions, config, logger });
+  // Built before the approval queue, which consults it on every tool call.
+  const policy = new Policy({ logger, trustAllow: config.trustRepoPolicy });
+  const approvals = new ApprovalQueue({ sessions, policy, config, logger });
   const races = new RaceManager({ sessions, config, logger });
   const usage = new UsageTracker({ config, logger });
+  const autoResume = new AutoResume({ sessions, usage, config, logger });
+  const budget = new BudgetGuard({ sessions, policy, config, logger });
+  const push = new PushSender({ config, logger });
+  const digest = new Digest({ sessions, hookBus, budget, autoResume, approvals, logger });
   const projects = new ProjectIndex({ config, logger });
   const workspace = new Workspace({ config, logger });
 
@@ -186,6 +197,83 @@ async function start(options = {}) {
   }));
 
   api.get('/usage', wrap(async (_req, res) => res.json(await usage.read())));
+
+  api.get('/budget', (_req, res) => res.json(budget.state()));
+
+  api.put('/budget', wrap(async (req, res) => {
+    const { settings, error } = budget.updateSettings(req.body || {});
+    if (error) return res.status(400).json({ error, code: ERROR_CODE.BAD_REQUEST, settings });
+    res.json(budget.state());
+  }));
+
+  api.post('/budget/:id/release', wrap(async (req, res) => {
+    const result = budget.release(req.params.id);
+    if (!result.ok) return res.status(404).json({ error: result.error, code: ERROR_CODE.NOT_FOUND });
+    res.json(budget.state());
+  }));
+
+  api.get('/budget/history', (_req, res) => res.json({ history: budget.history() }));
+
+  api.get('/digest', wrap(async (req, res) => {
+    res.json(await digest.build({
+      since: req.query.since ? Number(req.query.since) : undefined,
+      until: req.query.until ? Number(req.query.until) : undefined,
+    }));
+  }));
+
+  api.get('/policy', wrap(async (req, res) => {
+    // Read fresh: the panel is how someone checks a file they just edited.
+    policy.invalidate();
+    res.json(policy.describe(String(req.query.cwd || config.HOME)));
+  }));
+
+  api.get('/push/key', (_req, res) => res.json({
+    publicKey: push.publicKey(),
+    subscriptions: push.list(),
+  }));
+
+  api.post('/push/subscribe', wrap(async (req, res) => {
+    const result = push.subscribe(req.body && req.body.subscription, req.body && req.body.label);
+    if (!result.ok) return res.status(400).json({ error: result.error, code: ERROR_CODE.BAD_REQUEST });
+    res.json({ ok: true, subscriptions: push.list() });
+  }));
+
+  api.post('/push/unsubscribe', wrap(async (req, res) => {
+    const result = push.unsubscribe(String((req.body && req.body.endpoint) || ''));
+    if (!result.ok) return res.status(404).json({ error: result.error, code: ERROR_CODE.NOT_FOUND });
+    res.json({ ok: true, subscriptions: push.list() });
+  }));
+
+  api.post('/push/test', wrap(async (req, res) => {
+    res.json(await push.send({
+      title: 'Claude Orchestra',
+      body: 'Push works. This is how a permission request will reach you.',
+      reason: 'test',
+      tag: 'orchestra-test',
+    }));
+  }));
+
+  api.get('/auto-resume', (_req, res) => res.json(autoResume.snapshot()));
+
+  api.put('/auto-resume', wrap(async (req, res) => {
+    const { settings, error } = autoResume.updateSettings(req.body || {});
+    // A rejected patch still returns the settings in force, so the panel can
+    // show the error next to the values that are actually live.
+    if (error) return res.status(400).json({ error, code: ERROR_CODE.BAD_REQUEST, settings });
+    res.json({ settings, plans: autoResume.plans() });
+  }));
+
+  api.post('/auto-resume/:id/now', wrap(async (req, res) => {
+    const result = await autoResume.resumeNow(req.params.id);
+    if (!result.ok) return res.status(409).json({ error: result.error, code: ERROR_CODE.BAD_REQUEST });
+    res.json(result);
+  }));
+
+  api.delete('/auto-resume/:id', (req, res) => {
+    const result = autoResume.cancel(req.params.id);
+    if (!result.ok) return res.status(404).json({ error: result.error, code: ERROR_CODE.NOT_FOUND });
+    res.json(result);
+  });
 
   api.get('/hooks/status', wrap(async (_req, res) => res.json(await hooksInstall.status())));
   api.post('/hooks/install', wrap(async (req, res) => res.json(await hooksInstall.install(req.body || {}))));
@@ -338,6 +426,9 @@ async function start(options = {}) {
     orphans: sessions.listOrphans(),
     approvals: approvals.pending(),
     rules: approvals.listRules(),
+    autoResume: autoResume.snapshot(),
+    budget: budget.state(),
+    push: { publicKey: push.publicKey(), devices: push.list().length },
     features: { pty: sessions.available, ptyError: sessions.unavailableReason },
   });
 
@@ -348,6 +439,9 @@ async function start(options = {}) {
   sessions.on('exit', e => broadcast({ t: S2C.EXIT, id: e.id, code: e.code }));
   sessions.on('closed', e => broadcast({ t: S2C.CLOSED, id: e.id }));
   sessions.on('warning', message => logger.warn(message));
+  // Every flush, for every session. AutoResume rejects anything that is not a
+  // Claude panel before it looks at a byte.
+  sessions.on('output', ({ id, data }) => autoResume.noteOutput(id, data));
 
   hookBus.on('event', e => broadcast({ t: S2C.AGENT_EVENT, event: e }));
   hookBus.on('stalled', e => broadcast({ t: S2C.AGENT_EVENT, event: { ...e, event: 'Stalled' } }));
@@ -357,6 +451,57 @@ async function start(options = {}) {
   // under it would decode as a resolution with no id.
   approvals.on('rules', rules => broadcast({ t: S2C.APPROVAL_RULES, rules }));
   races.on('race', race => broadcast({ t: S2C.RACE, race }));
+  autoResume.on('plans', plans => broadcast({ t: S2C.AUTO_RESUME, plans, settings: autoResume.settings() }));
+  budget.on('state', state => broadcast({ t: S2C.BUDGET, ...state }));
+
+  /**
+   * Push is the only path that reaches a closed tab, so the events that need a
+   * human are mirrored to it. Every send is fire and forget: a notification
+   * that cannot be delivered must never hold up the agent that triggered it.
+   */
+  const notify = message => {
+    push.send(message).catch(err => logger.warn(`push: ${err.message}`));
+  };
+
+  approvals.on('request', r => notify({
+    title: `${r.sessionName || 'An agent'} wants permission`,
+    body: `${r.tool}: ${r.summary || ''}`.slice(0, 200),
+    reason: 'permission',
+    sessionId: r.sessionId,
+    tag: `approval-${r.id}`,
+    // The one notification worth interrupting for: an agent is blocked until
+    // it is answered, and it fails closed on the deadline.
+    requireInteraction: true,
+    url: '/?view=approvals',
+  }));
+
+  budget.on('breach', info => notify({
+    title: `${info.name || 'A session'} hit its ${info.scope} budget`,
+    body: `$${info.spent.toFixed(2)} of $${info.cap.toFixed(2)}`
+      + (info.locked ? '. The session is locked.' : '.'),
+    reason: 'budget',
+    sessionId: info.sessionId,
+    tag: `budget-${info.sessionId}`,
+  }));
+
+  autoResume.on('resumed', info => {
+    logger.info(`auto-resume: sent ${JSON.stringify(info.text)} to ${info.name}`);
+    notify({
+      title: `${info.name} resumed`,
+      body: `The quota reset, so it was sent ${JSON.stringify(info.text)}.`,
+      reason: 'resumed',
+      sessionId: info.sessionId,
+      tag: `resume-${info.sessionId}`,
+    });
+  });
+
+  hookBus.on('stalled', info => notify({
+    title: `${info.name || 'An agent'} looks stuck`,
+    body: info.detail || info.reason,
+    reason: 'stalled',
+    sessionId: info.sessionId,
+    tag: `stall-${info.sessionId}`,
+  }));
 
   wss.on('connection', ws => {
     clients.add(ws);
@@ -496,9 +641,11 @@ async function start(options = {}) {
     server.listen(port, host);
   });
 
-  // The stall sweep only runs once the server is actually up, so a failed
-  // bind does not leave an orphan interval behind.
+  // The sweeps only run once the server is actually up, so a failed bind does
+  // not leave orphan intervals behind.
   hookBus.start();
+  autoResume.start();
+  budget.start();
 
   if (options.workspace && options.cwd) {
     try {
@@ -528,13 +675,15 @@ async function start(options = {}) {
     closing = true;
     logger.info('shutting down');
     hookBus.stop();
+    autoResume.stop();
+    budget.stop();
     approvals.shutdown();
     for (const ws of clients) { try { ws.close(); } catch { /* already closed */ } }
     sessions.shutdown();
     await new Promise(resolve => server.close(resolve));
   };
 
-  return { url, port, host, token: config.token, close, sessions, app, server };
+  return { url, port, host, token: config.token, close, sessions, autoResume, budget, policy, digest, push, app, server };
 }
 
 /**
