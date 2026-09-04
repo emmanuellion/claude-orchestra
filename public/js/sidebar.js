@@ -40,6 +40,17 @@ const STATUS_LABEL = {
 };
 
 /**
+ * What the launch button promises, per connection state. A frame sent while
+ * the socket is down is queued and replayed on the next open, so only a
+ * connection that has stopped trying deserves a flat refusal.
+ */
+const NEW_BTN_TITLE = {
+  online: 'Start a Claude agent in the selected project',
+  connecting: 'Reconnecting: the agent starts as soon as the connection is back',
+  offline: 'Disconnected from the server. Reload the page.',
+};
+
+/**
  * Urgency classes, lowest first: humans blocking agents, then agents blocking
  * themselves, then everything that can wait.
  */
@@ -279,18 +290,21 @@ export class Sidebar {
     this._sortMode = this._pref(PREF.SORT, 'urgency') === 'manual' ? 'manual' : 'urgency';
     this._tagFilter = new Set(this._normalizeFilter(this._pref(PREF.TAG_FILTER, [])));
     this._activeId = this._readActiveId();
+    this._conn = this._readConnection();
 
     this._build();
     this._bindDelegates();
     this._readApprovals();
     this._readProjects();
     this._renderList();
+    this._applyConnection();
 
     this._subscribe('sessions', () => this._renderList());
     this._subscribe('approvals', () => { this._readApprovals(); this._renderList(); });
     this._subscribe('projects', () => { this._readProjects(); this._renderProjects(); });
     this._subscribe('prefs', () => this._syncFromPrefs());
     this._subscribe('active', id => this._setActive(id));
+    this._subscribe('connection', state => this._setConnection(state));
 
     this._timer = setInterval(() => this._tick(), 1000);
   }
@@ -376,7 +390,8 @@ export class Sidebar {
     const launch = el('div', { class: 'sb-launch' });
     this.newBtn = el('button', { class: 'sb-new', text: 'New agent' });
     this.newBtn.type = 'button';
-    this.newBtn.title = 'Start a Claude agent in the selected project';
+    // The title and the disabled state belong to _applyConnection, which runs
+    // straight after _build and on every change after that.
 
     this.projectSel = el('select', { class: 'sb-project' });
     this.projectSel.title = 'Working directory for the next agent';
@@ -608,6 +623,32 @@ export class Sidebar {
   _readActiveId() {
     const state = this.store && this.store.state ? this.store.state : null;
     return state && typeof state.activeId === 'string' ? state.activeId : null;
+  }
+
+  /** 'online' | 'connecting' | 'offline'; the store normalises the socket states. */
+  _readConnection() {
+    const state = this.store && this.store.state ? this.store.state.connection : null;
+    return typeof state === 'string' ? state : 'connecting';
+  }
+
+  _setConnection(state) {
+    const next = typeof state === 'string' ? state : 'connecting';
+    if (next === this._conn) return;
+    this._conn = next;
+    this._applyConnection();
+  }
+
+  /**
+   * A frame sent while the socket is down is queued, not dropped, so a
+   * reconnecting sidebar keeps the button live: the agent starts when the
+   * socket returns, and the shell toasts to say so. Only 'offline', a
+   * connection that has given up, disables it, because nothing will flush.
+   */
+  _applyConnection() {
+    if (!this.newBtn) return;
+    this.newBtn.disabled = this._conn === 'offline';
+    this.newBtn.dataset.conn = this._conn;
+    this.newBtn.title = NEW_BTN_TITLE[this._conn] || NEW_BTN_TITLE.online;
   }
 
   _setActive(id) {

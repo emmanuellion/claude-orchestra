@@ -11,7 +11,7 @@
 import { h, clear, svg, Disposables } from './dom.js';
 import { S2C, C2S, STATUS, KIND } from './protocol.js';
 import { Store } from './store.js';
-import { Connection } from './connection.js';
+import { Connection, CONN_STATE } from './connection.js';
 import { TerminalView, TERMINAL_THEMES } from './terminal-view.js';
 import { Sidebar } from './sidebar.js';
 import { SupervisionView } from './supervision.js';
@@ -95,6 +95,8 @@ class App {
     this.popouts = new Map();
     /** @type {Set<string>} sessions between their close and their recreation. */
     this.restarting = new Set();
+    /** @type {Set<string>} views whose mount threw; their tab is gone. */
+    this.broken = new Set();
     /** @type {Object|null} last /api/usage payload, kept to redraw the meter. */
     this.quota = null;
 
@@ -130,9 +132,14 @@ class App {
     this.disposables.add(this.push.listen((view, sessionId) => this.setView(view, sessionId)));
 
     this.buildChrome();
-    this.mountViews();
+    // Wired before the views are built, because a view is a panel and the
+    // connection is the product. A constructor that throws now costs its own
+    // tab instead of the socket, the store subscriptions and the keyboard.
+    // Nothing fires in between: connect() is still further down, so no message
+    // can reach a handler before the view that needs it exists.
     this.wireConnection();
     this.wireStore();
+    this.mountViews();
     this.wireKeyboard();
 
     this.disposables.add(() => {
@@ -163,7 +170,12 @@ class App {
     }
     if (!orphans.length) return;
 
-    const bar = h('div', { class: 'orphan-bar' },
+    // Built empty first, then filled. Both the rows and the dismiss button
+    // need the bar itself to remove it, and naming it inside its own
+    // initialiser reads it from the temporal dead zone: the whole bar threw
+    // and no orphan was ever offered.
+    const bar = h('div', { class: 'orphan-bar' });
+    bar.append(
       h('div', { class: 'orphan-text' },
         h('strong', { text: `${orphans.length} session${orphans.length > 1 ? 's' : ''} from the previous run` }),
         h('span', { text: ' ended when the server stopped.' })),
@@ -316,7 +328,7 @@ class App {
       'M12 15a3 3 0 100-6 3 3 0 000 6z',
       'M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1A1.7 1.7 0 009 19.4a1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1A1.7 1.7 0 004.6 9a1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z',
     ]));
-    this.disposables.listen(btnSettings, 'click', () => this.settings.toggle());
+    this.disposables.listen(btnSettings, 'click', () => this.openSettings());
 
     this.initSidebarResize();
   }
@@ -324,7 +336,8 @@ class App {
   onTabsKeydown(e) {
     const target = e.target instanceof Element ? e.target.closest('.view-tab') : null;
     if (!target) return;
-    const order = VIEWS.map(v => v.id);
+    // A retired tab is hidden, so the arrows must not land on it.
+    const order = VIEWS.map(v => v.id).filter(id => !this.broken.has(id));
     const index = order.indexOf(target.dataset.view);
     if (index < 0) return;
 
@@ -452,71 +465,150 @@ class App {
     setTimeout(() => this.fitAll(), 220);
   }
 
+  /**
+   * Mounts one view in isolation. A panel that throws costs its own tab and
+   * nothing else: the alternative, which this replaces, was that a bug in any
+   * one of nine constructors left a painted page with no socket behind it,
+   * which reads to the user as a server fault.
+   *
+   * @param {string} id  view id, matching #view-<id> and #view-tab-<id>
+   * @param {() => any} build
+   * @returns {any|null} what build returned, or null when it threw
+   */
+  mountView(id, build) {
+    try {
+      return build();
+    } catch (err) {
+      this.broken.add(id);
+      console.error(`[orchestra] the ${id} view failed to mount`, err);
+      this.retireTab(id, err);
+      return null;
+    }
+  }
+
+  /**
+   * Takes a dead view out of the tab strip and leaves the reason inside it, so
+   * a stored view preference landing there explains itself instead of showing
+   * a blank page. The sidebar, the setup card and the settings panel own no
+   * tab and no section, so both lookups miss and the toast is all the user
+   * gets for those.
+   */
+  retireTab(id, err) {
+    const tab = document.getElementById(`view-tab-${id}`);
+    if (tab) tab.hidden = true;
+    const section = document.getElementById(`view-${id}`);
+    if (!section) return;
+    clear(section);
+    section.appendChild(h('div', { class: 'grid-empty' },
+      h('p', { class: 'grid-empty-title', text: 'This panel could not start' }),
+      h('p', { class: 'grid-empty-hint', text: err && err.message ? err.message : String(err) }),
+      h('p', { class: 'grid-empty-hint', text: 'The rest of Orchestra is running. Reload to try again.' })));
+  }
+
+  /** Calls an optional hook on a view that may have failed to mount. */
+  poke(view, method) {
+    if (view && typeof view[method] === 'function') view[method]();
+  }
+
+  /** The settings panel, or a toast saying why there is not one. */
+  openSettings(tab) {
+    if (!this.settings) {
+      this.toast('The settings panel failed to start. Reload the page.', 'error');
+      return;
+    }
+    if (tab) this.settings.openPanel(tab);
+    else this.settings.toggle();
+  }
+
+  /**
+   * A CREATE sent while the socket is down is queued, not lost, and create()
+   * reports that only by returning false. Unsaid, that is exactly "I click New
+   * agent and nothing happens", so say which of the two it was: one of them
+   * still starts an agent, a little later.
+   */
+  createSession(spec) {
+    if (this.connection.create(spec)) return true;
+    if (this.connection.state === CONN_STATE.CLOSED) {
+      this.toast('Not connected to the server, so nothing was started. Reload the page.', 'error');
+    } else {
+      this.toast('Not connected yet. This agent starts as soon as the connection is back.');
+    }
+    return false;
+  }
+
   mountViews() {
     const actions = {
       focusSession: id => this.focusSession(id),
       minimizeSession: id => this.toggleMinimized(id),
       closeSession: id => this.closeSession(id),
-      newAgent: spec => this.connection.create(spec),
+      newAgent: spec => this.createSession(spec),
       setView: (view, sessionId) => this.setView(view, sessionId),
       openLauncher: () => this.setView('launcher'),
     };
 
-    this.sidebar = new Sidebar(document.getElementById('sidebar-root'), {
+    this.sidebar = this.mountView('sidebar', () => new Sidebar(document.getElementById('sidebar-root'), {
       store: this.store, connection: this.connection, actions,
-    });
+    }));
 
-    this.supervision = new SupervisionView(document.getElementById('view-supervision'), {
+    this.supervision = this.mountView('supervision', () => new SupervisionView(document.getElementById('view-supervision'), {
       store: this.store, connection: this.connection, actions,
-    });
+    }));
 
-    this.approvals = new ApprovalsView(document.getElementById('view-approvals'), {
+    this.approvals = this.mountView('approvals', () => new ApprovalsView(document.getElementById('view-approvals'), {
       store: this.store, connection: this.connection, api: this.api,
-    }).mount();
+    }).mount());
 
-    this.digest = new DigestView(document.getElementById('view-digest'), {
+    this.digest = this.mountView('digest', () => new DigestView(document.getElementById('view-digest'), {
       api: this.api, actions, logger: console,
-    }).mount();
+    }).mount());
 
     // Above the views, not inside one: every .view is absolutely positioned
     // over the whole area, so a card placed in one would be invisible from the
     // others, which is where a novice is most likely to be lost.
-    this.setup = new SetupCard(document.getElementById('main'), {
-      store: this.store,
-      api: this.api,
-      actions,
-      push: this.push,
-      // Resolved lazily: the settings panel is built after this one.
-      openSettings: (tab) => this.settings.openPanel(tab),
-      logger: console,
-    }).mount();
-    this.disposables.add(() => this.setup.destroy());
+    this.setup = this.mountView('setup', () => {
+      const card = new SetupCard(document.getElementById('main'), {
+        store: this.store,
+        api: this.api,
+        actions,
+        push: this.push,
+        // Resolved lazily: the settings panel is built after this one.
+        openSettings: (tab) => this.openSettings(tab),
+        logger: console,
+      }).mount();
+      // Registered inside the closure, so a mount that threw leaves behind no
+      // disposable pointing at a card that was never built.
+      this.disposables.add(() => card.destroy());
+      return card;
+    });
 
-    this.race = new RaceView(document.getElementById('view-race'), {
+    this.race = this.mountView('race', () => new RaceView(document.getElementById('view-race'), {
       store: this.store, connection: this.connection, api: this.api,
-    }).mount();
+    }).mount());
 
-    this.launcher = new Launcher(document.getElementById('view-launcher'), {
+    this.launcher = this.mountView('launcher', () => new Launcher(document.getElementById('view-launcher'), {
       store: this.store,
       connection: this.connection,
       api: this.api,
       logger: console,
       onNavigate: (view, params) => this.setView(view, params && params.sessionId),
-    }).mount();
+    }).mount());
 
-    this.settings = new SettingsPanel(document.getElementById('settings-root'), {
+    this.settings = this.mountView('settings', () => new SettingsPanel(document.getElementById('settings-root'), {
       store: this.store,
       connection: this.connection,
       api: this.api,
       notifications: this.notifications,
       push: this.push,
       logger: console,
-    }).mount();
+    }).mount());
 
-    this.grid = h('div', { class: 'term-grid' });
-    const terminals = document.getElementById('view-terminals');
-    clear(terminals);
-    terminals.appendChild(this.grid);
+    this.grid = this.mountView('terminals', () => {
+      const grid = h('div', { class: 'term-grid' });
+      const terminals = document.getElementById('view-terminals');
+      clear(terminals);
+      terminals.appendChild(grid);
+      return grid;
+    });
 
     // Views that do not take an `actions` object navigate by event instead.
     this.disposables.listen(document.body, 'orchestra:navigate', e => {
@@ -526,7 +618,14 @@ class App {
       if (d && d.view) this.setView(d.view, d.sessionId);
     }));
 
-    this.setView(this.store.getPref('view', 'terminals'));
+    if (this.broken.size) {
+      // One sticky toast, not one per casualty: the point is that the user
+      // knows something is missing before they go looking for it.
+      this.toast(`These panels failed to start: ${[...this.broken].join(', ')}. Everything else is running.`,
+        'error', 0);
+    }
+    const saved = this.store.getPref('view', 'terminals');
+    this.setView(this.broken.has(saved) ? 'terminals' : saved);
   }
 
   setView(id, sessionId) {
@@ -549,10 +648,10 @@ class App {
       if (sessionId) this.focusSession(sessionId);
       requestAnimationFrame(() => this.fitAll());
     }
-    if (id === 'supervision' && this.supervision.refresh) this.supervision.refresh();
-    if (id === 'digest' && this.digest.activate) this.digest.activate();
-    if (id === 'launcher' && this.launcher.activate) this.launcher.activate();
-    if (id === 'approvals' && this.approvals.render) this.approvals.render();
+    if (id === 'supervision') this.poke(this.supervision, 'refresh');
+    if (id === 'digest') this.poke(this.digest, 'activate');
+    if (id === 'launcher') this.poke(this.launcher, 'activate');
+    if (id === 'approvals') this.poke(this.approvals, 'render');
   }
 
   wireStore() {
@@ -578,6 +677,8 @@ class App {
   }
 
   syncGrid() {
+    // The grid is a mounted view like any other, so it can be missing.
+    if (!this.grid) return;
     const sessions = this.store.getSessions();
     const alive = new Set(sessions.map(s => s.id));
 
@@ -803,7 +904,7 @@ class App {
           class: 'grid-empty-btn grid-empty-btn-ghost',
           text: 'Settings',
           title: 'Hooks, safety, limits and remote access',
-          onclick: () => this.settings.openPanel('setup'),
+          onclick: () => this.openSettings('setup'),
         }))));
   }
 
@@ -1015,8 +1116,8 @@ class App {
   shortcutHandlers() {
     return {
       launcher: () => this.setView('launcher'),
-      newAgent: () => this.connection.create({ kind: KIND.CLAUDE, cwd: this.currentCwd() }),
-      newShell: () => this.connection.create({ kind: KIND.SHELL, cwd: this.currentCwd() }),
+      newAgent: () => this.createSession({ kind: KIND.CLAUDE, cwd: this.currentCwd() }),
+      newShell: () => this.createSession({ kind: KIND.SHELL, cwd: this.currentCwd() }),
       closeSession: () => this.withActive(s => this.closeSession(s.id)),
       renameSession: () => this.withActive(s => this.renamePrompt(s.id)),
       nextSession: () => this.cycleSession(1),
@@ -1028,7 +1129,7 @@ class App {
       viewRace: () => this.setView('race'),
       search: () => this.openSearch(),
       broadcast: () => this.focusBroadcast(),
-      settings: () => this.settings.toggle(),
+      settings: () => this.openSettings(),
       zoomIn: () => this.zoomBy(1),
       zoomOut: () => this.zoomBy(-1),
     };
@@ -1204,6 +1305,12 @@ class App {
 
   toast(message, kind = 'info', timeout = 5000) {
     const root = document.getElementById('toast-root');
+    // The global error handler reports through here, so a missing toast root
+    // would turn one crash into a page that says nothing at all.
+    if (!root) {
+      console[kind === 'error' ? 'error' : 'log'](`[orchestra] ${message}`);
+      return null;
+    }
     const node = h('div', { class: ['toast', `toast-${kind}`] },
       h('span', { class: 'toast-text', text: String(message) }),
       h('button', { class: 'toast-close', text: '×', title: 'Dismiss', onclick: () => node.remove() }));
@@ -1369,13 +1476,11 @@ function resolveTheme(pref) {
 const app = new App();
 window.__orchestraApp = app;
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => app.start(), { once: true });
-} else {
-  app.start();
-}
-
-// A crash in a view must not leave the page looking merely idle.
+// Registered before start(), not after it. This file is a module, so it runs
+// with the document already parsed and the else branch below is the one that
+// fires: leaving these underneath meant a throw inside start() aborted the
+// rest of the module body, and the handler that would have reported the crash
+// was never installed. A crash in a view must not leave the page looking idle.
 window.addEventListener('error', e => {
   console.error('[orchestra] uncaught', e.error || e.message);
   if (app.toast) app.toast(`Unexpected error: ${e.message}`, 'error');
@@ -1384,5 +1489,11 @@ window.addEventListener('unhandledrejection', e => {
   console.error('[orchestra] unhandled rejection', e.reason);
   if (app.toast) app.toast(`Unexpected error: ${e.reason && e.reason.message ? e.reason.message : e.reason}`, 'error');
 });
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => app.start(), { once: true });
+} else {
+  app.start();
+}
 
 export { App };
